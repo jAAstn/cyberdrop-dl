@@ -8,11 +8,12 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from cyberdrop_dl import aio
 from cyberdrop_dl.crawlers.crawler import Crawler, SupportedDomains, SupportedPaths, auto_task_id
 from cyberdrop_dl.exceptions import ScrapeError
 from cyberdrop_dl.mediaprops import Resolution, Subtitle
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import m3u8, open_graph, parse_url
+from cyberdrop_dl.utils import b64_pad, m3u8, open_graph, parse_url
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ _ISO639_MAP = {
 
 _HEADERS: dict[str, str] = {
     "User-Agent":  # Force firefox on linux to get high res mp4 formats as "fallbacks"
-    "Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0"
+    "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"
 }
 
 
@@ -94,7 +95,7 @@ class VoeSxCrawler(Crawler):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case ["e", video_id] | [video_id, "download"] | [video_id]:
-                return await self.embed(scrape_item, video_id)
+                await self.embed(scrape_item, video_id)
             case _:
                 raise ValueError
 
@@ -112,8 +113,8 @@ class VoeSxCrawler(Crawler):
                 self.create_task(self._redirect(scrape_item))
                 return
 
-        soup = await resp.soup()
-        video = extract_voe_video(soup, origin)
+            video = await extract_voe_video(await resp.soup(), origin)
+
         if not video.id:
             video.id = video_id
         scrape_item.url = embed_url
@@ -153,6 +154,7 @@ class VoeSxCrawler(Crawler):
     _redirect = auto_task_id(fetch)
 
 
+@aio.to_thread
 def extract_voe_video(soup: BeautifulSoup, origin: AbsoluteHttpURL) -> VoeVideo:
     for js_script in soup.select("script[type='application/json']"):
         script_text = js_script.decode_contents()
@@ -189,10 +191,8 @@ def _load_json(json_content: str) -> Any:
 
 def _decrypt_json(encrypted_json: str) -> Any:
     def b64_decode(b64_string: str) -> str | None:
-        if pad := len(b64_string) % 4:
-            b64_string += "=" * (4 - pad)
         try:
-            return base64.b64decode(b64_string).decode("utf-8", errors="replace")
+            return base64.b64decode(b64_pad(b64_string)).decode("utf-8", errors="replace")
         except ValueError:
             return None
 

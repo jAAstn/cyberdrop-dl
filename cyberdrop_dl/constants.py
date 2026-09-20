@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 from contextvars import ContextVar
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Any, Literal, final
 
 from cyclopts import Parameter
 from typing_extensions import Sentinel
@@ -13,14 +13,19 @@ from cyberdrop_dl import __version__
 if TYPE_CHECKING:
     from pathlib import Path
 
+type ImpersonateTarget = Literal["chrome", "edge", "safari", "safari_ios", "chrome_android", "firefox"]
 
 LOGS_DATETIME_FORMAT = "%Y%m%d_%H%M%S"
 LOGS_DATE_FORMAT = "%Y_%m_%d"
 STARTUP_TIME_STR = datetime.datetime.now().strftime(LOGS_DATETIME_FORMAT)  # noqa: DTZ005
 CDL_USER_AGENT = f"cyberdrop-dl/{__version__}"
-MISSING = Sentinel("MISSING")
+
+
+MISSING: Any = Sentinel("MISSING")
+HttpMethod = Literal["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "TRACE", "PATCH", "QUERY"]
 
 MAIN_LOG_FILE: ContextVar[Path] = ContextVar("MAIN_LOG_FILE")
+USE_RETRY_PATH: ContextVar[bool] = ContextVar("USE_RETRY_PATH", default=False)
 
 DEFAULT_PARAMETER = Parameter(
     negative_iterable=[],
@@ -46,9 +51,8 @@ class TempExt(StrEnum):
     PART = ".part"
 
 
-@final
-class BlockedDomains:
-    partial_match = (
+BLOCKED_DOMAINS = frozenset(
+    (
         "facebook",
         "instagram",
         "fbcdn",
@@ -64,8 +68,7 @@ class BlockedDomains:
         "beacons.ai",
         "allmylinks.com",
     )
-
-    exact_match = ()
+)
 
 
 class HashMode(CIStrEnum):

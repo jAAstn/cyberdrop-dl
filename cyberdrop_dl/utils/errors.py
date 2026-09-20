@@ -10,14 +10,14 @@ from typing import TYPE_CHECKING, Concatenate, Protocol, cast, overload
 import aiohttp.client_exceptions
 import mega.errors
 import yarl
-from curl_cffi.requests import exceptions as curl_exceptions
 from pydantic import ValidationError
 
-from cyberdrop_dl.exceptions import CDLAppError, CDLBaseError, create_error_msg, get_origin
+from cyberdrop_dl.exceptions import CDLAppError, CDLBaseError, ScrapeError, create_error_msg, get_origin
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Generator
     from pathlib import Path
+    from types import TracebackType
 
     from cyberdrop_dl.downloader.http import Downloader
     from cyberdrop_dl.manager import Manager
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ERROR_WRAPPER_ATTR = "__cdl_error_wrapped__"
+__tracebackhide__ = True
 
 
 def is_error_wrapped(method: object) -> bool:
@@ -41,23 +42,94 @@ def _mark_as_safe[T](fn: T) -> T:
     return fn
 
 
+def _strip_tb_frames(tb: TracebackType | None) -> TracebackType | None:
+    "Similar to pytest, hide anything with __tracebackhide__"
+    if tb is None:
+        return None
+
+    for ns in (tb.tb_frame.f_locals, tb.tb_frame.f_globals):
+        if ns.get("__tracebackhide__"):
+            return _strip_tb_frames(tb.tb_next)
+
+    tb.tb_next = _strip_tb_frames(tb.tb_next)
+    return tb
+
+
+def _clean_exception(exc: BaseException | None) -> None:
+    if exc is None:
+        return
+
+    exc.__traceback__ = _strip_tb_frames(exc.__traceback__)
+
+    _clean_exception(exc.__cause__)
+    _clean_exception(exc.__context__)
+
+
+@contextlib.contextmanager
+def _tb_ctx() -> Generator[None]:
+    try:
+        yield
+    except Exception as e:
+        _clean_exception(e)
+        raise
+
+
 def _clean_curl_error(e: object) -> str:
     return str(e).partition(". See https://curl.se/")[0]
 
 
-@contextlib.contextmanager
-def _curl_context() -> Generator[None]:
-    try:
-        yield
-    except curl_exceptions.Timeout as e:
-        log_msg = _clean_curl_error(repr(e))
-        raise CDLAppError("Timeout", log_msg) from None
-    except curl_exceptions.DNSError as e:
-        log_msg = _clean_curl_error(repr(e))
-        raise CDLAppError("Client Connector Error", log_msg) from None
-    except curl_exceptions.RequestException as e:
-        log_msg = _clean_curl_error(e)
-        raise CDLAppError(f"Curl Error ({e.code})", log_msg) from None
+try:
+    from curl_cffi.requests import exceptions as curl_exceptions
+except ImportError:
+    _curl_context: Callable[[], contextlib.AbstractContextManager[None]] = contextlib.nullcontext
+
+else:
+
+    @contextlib.contextmanager
+    def _curl_context() -> Generator[None]:
+        try:
+            yield
+        except curl_exceptions.Timeout as e:
+            log_msg = _clean_curl_error(repr(e))
+            raise CDLAppError("Timeout", log_msg) from None
+        except curl_exceptions.DNSError as e:
+            log_msg = _clean_curl_error(repr(e))
+            raise CDLAppError("Client Connector Error", log_msg) from None
+        except curl_exceptions.RequestException as e:
+            log_msg = _clean_curl_error(e)
+            raise CDLAppError(f"Curl Error ({e.code})", log_msg) from None
+
+
+try:
+    from wreq import exceptions as wreq_exceptions
+except ImportError:
+    _wreq_context: Callable[[], contextlib.AbstractContextManager[None]] = contextlib.nullcontext
+
+else:
+
+    @contextlib.contextmanager
+    def _wreq_context() -> Generator[None]:
+        try:
+            yield
+
+        except wreq_exceptions.TimeoutError as e:
+            raise CDLAppError("Timeout", repr(e)) from None
+        except (
+            wreq_exceptions.ConnectionResetError,
+            wreq_exceptions.TlsError,
+            wreq_exceptions.ProxyConnectionError,
+            wreq_exceptions.ConnectionError,
+            wreq_exceptions.RedirectError,
+            wreq_exceptions.UpgradeError,
+        ) as e:
+            raise CDLAppError(type(e).__name__, repr(e)) from None
+        except (
+            wreq_exceptions.BodyError,
+            wreq_exceptions.BuilderError,
+            wreq_exceptions.DecodingError,
+            wreq_exceptions.RequestError,
+        ) as e:
+            raise CDLAppError(type(e).__name__, repr(e)) from e
 
 
 @contextlib.contextmanager
@@ -131,6 +203,8 @@ def _builtin_context() -> Generator[None]:
         yield
     except NotImplementedError as e:
         raise CDLAppError("NotImplemented") from e
+    except LookupError as e:
+        raise ScrapeError(422, repr(e)) from e
     except TimeoutError as e:
         raise CDLAppError("Timeout", repr(e)) from None
 
@@ -147,10 +221,12 @@ def error_handling_context(self: _HasManager, item: ScrapeItem | MediaItem | yar
     real_url: yarl.URL | str = ""
     try:
         with (
+            _tb_ctx(),
             _builtin_context(),
             _pydantic_context(),
             _aiohttp_context(),
             _curl_context(),
+            _wreq_context(),
             _mega_nz_context(),
             _exc_group_context(),
         ):
@@ -171,33 +247,40 @@ def error_handling_context(self: _HasManager, item: ScrapeItem | MediaItem | yar
     if app_error is None:
         return
 
-    _log_error(self, real_url or url, item, app_error, exc, origin)
+    origin = origin or get_origin(item)
+    if bool(getattr(self, "log_prefix", False)):
+        self, item = cast("Downloader", self), cast("MediaItem", item)
+        _log_dl_error(self, item, app_error, exc, origin)
+    else:
+        _log_scrape_error(self, real_url or url, app_error, exc, origin)
 
 
-def _log_error(  # noqa: PLR0913, PLR0917
+def _log_scrape_error(
     self: _HasManager,
     url: yarl.URL | str,
-    item: ScrapeItem | MediaItem | yarl.URL,
     app_error: CDLAppError,
     exc: BaseException | None,
     origin: yarl.URL | Path | None,
 ) -> None:
-    origin = origin or get_origin(item)
-    is_downloader = bool(getattr(self, "log_prefix", False))
-    if is_downloader:
-        self, item = cast("Downloader", self), cast("MediaItem", item)
-        logger.error(
-            f"{self.log_prefix} Failed: {item.url} ({app_error.msg}) \n -> Referer: {item.referer}",
-            exc_info=exc,
-        )
-        self.manager.logs.write_download_error(item.url, item.referer, app_error.csv_msg, origin)
-        self.manager.scrape_mapper.tui.files.stats.failed += 1
-        self.manager.scrape_mapper.tui.download_errors.add(app_error.ui_error)
-        return
-
     logger.error(f"Scrape Failed: {url} ({app_error.msg})", exc_info=exc)
-    self.manager.logs.write_scrape_error(url, app_error.csv_msg, origin)
+    self.manager.scrape_mapper.logs.write_scrape_error(url, app_error.csv_msg, origin)
     self.manager.scrape_mapper.tui.scrape_errors.add(app_error.ui_error)
+
+
+def _log_dl_error(
+    self: Downloader,
+    item: MediaItem,
+    app_error: CDLAppError,
+    exc: BaseException | None,
+    origin: yarl.URL | Path | None,
+) -> None:
+    logger.error(
+        f"{self.log_prefix} Failed: {item.url} ({app_error.msg}) \n -> Referer: {item.referer}",
+        exc_info=exc,
+    )
+    self.manager.scrape_mapper.logs.write_download_error(item.url, item.referer, app_error.csv_msg, origin)
+    self.manager.scrape_mapper.tui.files.stats.failed += 1
+    self.manager.scrape_mapper.tui.download_errors.add(app_error.ui_error)
 
 
 @overload

@@ -137,6 +137,9 @@ class _FileFilter(ConfigModel):
     non_media: bool = True
     "Download/skip non media files (.txt, zip, .rar, etc...)"
 
+    thumbnails: bool = False
+    "Download/skip thumbnails of media files (if available)"
+
 
 class Filters(ConfigGroup):
     files: _FileFilter = Field(default_factory=_FileFilter)
@@ -150,6 +153,9 @@ class Filters(ConfigGroup):
 
     filename_regex: FalsyAsNone[re.Pattern[str]] = None
     "Only download files that match this regex"
+
+    filename_regex_exclude: FalsyAsNone[re.Pattern[str]] = None
+    "Do NOT download files that match this regex"
 
     only_hosts: set[NonEmptyStr] = Field(default_factory=set)
     "Only scrape/download from these domains"

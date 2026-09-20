@@ -120,6 +120,15 @@ class ScrapeItemType(IntEnum):
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class MuxVideo:
+    video: AbsoluteHttpURL
+    audio: AbsoluteHttpURL
+
+    def __json__(self) -> dict[str, Any]:
+        return {"video": str(self.video), "audio": str(self.audio)}
+
+
 @final
 @dataclasses.dataclass(slots=True, kw_only=True)
 class MediaItem:
@@ -140,6 +149,7 @@ class MediaItem:
     album_id: str | None = None
     uploaded_at: int | None = None
     xxhash: str | None = None
+    thumbnail: AbsoluteHttpURL | None = None
 
     parents: tuple[AbsoluteHttpURL, ...] = dataclasses.field(default_factory=tuple)
     attempts: int = dataclasses.field(init=False, default=0)
@@ -202,6 +212,24 @@ class MediaItem:
             me["xxhash"] = f"xxh128:{self.xxhash}"
         return me
 
+    def as_segment(self, filename: str, url: AbsoluteHttpURL) -> MediaItem:
+        me = MediaItem(
+            url=url,
+            domain=self.domain,
+            download_folder=self.download_folder,
+            filename=filename,
+            db_path=self.db_path,
+            referer=self.url,
+            album_id=self.album_id,
+            ext=self.ext,
+            parents=self.parents,
+            uploaded_at=self.uploaded_at,
+            is_segment=True,
+        )
+        me.headers = self.headers.copy()
+        me.extra_info = self.extra_info.copy()
+        return me
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class RetryInfo:
@@ -232,6 +260,7 @@ class ScrapeItem:
     _type: ScrapeItemType | None = None
     _uploaded_at: int | None = None
     retry_info: RetryInfo | None = None
+    markers: list[Any] = dataclasses.field(default_factory=list)
 
     __repr__ = signature.simple_repr("url", "folders", "uploaded_at")
 
@@ -388,7 +417,15 @@ class ScrapeItem:
 
     def copy(self) -> Self:
         """Returns a deep copy of this scrape_item"""
-        return copy.deepcopy(self)
+        me = copy.deepcopy(self)
+        me.markers = self.markers.copy()
+        return me
+
+    def get_referer(self) -> AbsoluteHttpURL | None:
+        if self.referer:
+            return self.referer
+        if self.parents:
+            return self.parents[-1]
 
 
 def _has_domain(folder: str) -> bool:

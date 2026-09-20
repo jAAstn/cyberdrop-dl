@@ -7,7 +7,6 @@ import asyncio
 import builtins
 import contextlib
 import dataclasses
-import shutil
 import sys
 from pathlib import Path
 from stat import S_ISREG
@@ -28,12 +27,14 @@ if TYPE_CHECKING:
         Coroutine,
         Iterable,
         Iterator,
+        Mapping,
         Sequence,
     )
     from contextvars import Context
     from types import TracebackType
 
     from _typeshed import OpenBinaryMode, OpenTextMode
+
 
 _T_co = TypeVar("_T_co", covariant=True)
 
@@ -97,8 +98,9 @@ class EagerTaskGroup(asyncio.TaskGroup):
         return self.create_task(coro, name=name, context=context, eager_start=True)
 
 
-@dataclasses.dataclass(slots=True, eq=False)
+@dataclasses.dataclass(frozen=True, slots=True, eq=False)
 class TaskManager:
+    logs: EagerTaskGroup = dataclasses.field(default_factory=EagerTaskGroup)
     scrape: EagerTaskGroup = dataclasses.field(default_factory=EagerTaskGroup)
     downloads: EagerTaskGroup = dataclasses.field(default_factory=EagerTaskGroup)
 
@@ -118,6 +120,10 @@ class _AsyncChain:
             async for value in a_iterable:
                 yield value
 
+    @staticmethod
+    async def yield_this[T](obj: T) -> AsyncGenerator[T]:
+        yield obj
+
 
 chain = _AsyncChain()
 
@@ -133,13 +139,10 @@ async def peek_first[T](async_iterable: AsyncIterable[T], /) -> tuple[T, AsyncGe
     async_iterator = aiter(async_iterable)
     first = await next(async_iterator)
 
-    async def yield_again() -> AsyncGenerator[T, None]:
-        yield first
-
-    return first, chain(yield_again(), async_iterator)
+    return first, chain(chain.yield_this(first), async_iterator)
 
 
-@dataclasses.dataclass(slots=True, eq=False)
+@dataclasses.dataclass(frozen=True, slots=True, eq=False)
 class WeakAsyncLocks[T]:
     """A WeakValueDictionary wrapper for asyncio.Locks.
 
@@ -198,12 +201,8 @@ class AsyncIOWrapper[AnyStr: (bytes, str)]:
         return await asyncio.to_thread(self._io.close)
 
     async def __aiter__(self) -> AsyncIterator[AnyStr]:
-        while True:
-            line = await self.readline()
-            if line:
-                yield line
-            else:
-                break
+        while line := await self.readline():
+            yield line
 
     async def read(self, size: int = -1) -> AnyStr:
         return await asyncio.to_thread(self._io.read, size)
@@ -239,49 +238,100 @@ class AsyncIteratorWrapper[T]:
         return cast("T", value)
 
 
-async def gather[T](*coros: Awaitable[T]) -> list[T]:
-    """Like asyncio.gather but an exception on any coro cancels all pending coros
-
-    AKA: all or nothing"""
-
-    async def wrap(coro: Awaitable[T]) -> T:
-        return await coro
-
-    async with asyncio.TaskGroup() as tg:
-        tasks = [tg.create_task(wrap(coro)) for coro in coros]
-
-    return [t.result() for t in tasks]
+@overload
+async def gather[T1](coro1: Awaitable[T1], /, *, fail_fast: bool = True) -> tuple[T1]: ...
 
 
 @overload
-async def safe_gather[T1](coro: Awaitable[T1], /) -> tuple[T1]: ...
+async def gather[T1, T2](coro1: Awaitable[T1], coro2: Awaitable[T2], /, *, fail_fast: bool = True) -> tuple[T1, T2]: ...
+
+
 @overload
-async def safe_gather[T1, T2](coro_1: Awaitable[T1], coro_2: Awaitable[T2], /) -> tuple[T1, T2]: ...
-@overload
-async def safe_gather[T1, T2, T3](
-    coro_1: Awaitable[T1],
-    coro_2: Awaitable[T2],
-    coro_3: Awaitable[T3],
-    /,
+async def gather[T1, T2, T3](
+    coro1: Awaitable[T1], coro2: Awaitable[T2], coro3: Awaitable[T3], /, *, fail_fast: bool = True
 ) -> tuple[T1, T2, T3]: ...
 
 
-async def safe_gather[T1, T2, T3](
-    coro_1: Awaitable[T1],
-    coro_2: Awaitable[T2] | None = None,
-    coro_3: Awaitable[T3] | None = None,
+@overload
+async def gather[T1, T2, T3, T4](
+    coro1: Awaitable[T1], coro2: Awaitable[T2], coro3: Awaitable[T3], coro4: Awaitable[T4], /, *, fail_fast: bool = True
+) -> tuple[T1, T2, T3, T4]: ...
+
+
+@overload
+async def gather[T1, T2, T3, T4, T5](
+    coro1: Awaitable[T1],
+    coro2: Awaitable[T2],
+    coro3: Awaitable[T3],
+    coro4: Awaitable[T4],
+    coro5: Awaitable[T5],
     /,
-) -> Sequence[T1 | T2 | T3]:
-    """Like `asyncio.gather(*coros, return_exceptions=True)`, but all exceptions are re-raised as an ExceptionGroup
+    *,
+    fail_fast: bool = True,
+) -> tuple[T1, T2, T3, T4, T5]: ...
 
-    This makes errors deterministic"""
 
-    coros = filter(None, (coro_1, coro_2, coro_3))
+@overload
+async def gather[T1, T2, T3, T4, T5, T6](
+    coro1: Awaitable[T1],
+    coro2: Awaitable[T2],
+    coro3: Awaitable[T3],
+    coro4: Awaitable[T4],
+    coro5: Awaitable[T5],
+    coro6: Awaitable[T6],
+    /,
+    *,
+    fail_fast: bool = True,
+) -> tuple[T1, T2, T3, T4, T5, T6]: ...
+
+
+@overload
+async def gather[T](*coros: Awaitable[T], fail_fast: bool = True) -> list[T]: ...
+
+
+async def gather[T](*coros: Awaitable[T], fail_fast: bool = True) -> Sequence[T]:  # pyright: ignore[reportInconsistentOverload]
+    """Like asyncio.gather(*coros, return_exceptions=False), but all coros always finish or are cancelled
+
+    if `fail_fast` is `True`, an exception on any coro immediately cancels all pending coros and is re-raised as an ExceptionGroup
+
+    if `fail_fast` is `False`, it waits for all coros to complete. It there was any exception, they are grouped and re-raised as an ExceptionGroup
+    in the same order as they were scheduled. This makes errors deterministic.
+    """
+
+    if fail_fast:
+        results, _ = await _tg_gather(coros, return_exceptions=False)
+        return results
+
     results = await asyncio.gather(*coros, return_exceptions=True)  # noqa: TID251
     errors = tuple(r for r in results if isinstance(r, BaseException))
     if errors:
         raise BaseExceptionGroup("", errors)
-    return cast("list[T1 | T2 | T3]", results)
+    return cast("list[T]", results)
+
+
+def _values_sorted_by_key[T](results: Mapping[int, T]) -> list[T]:
+    return [result for _, result in sorted(results.items())]
+
+
+async def _tg_gather[T](
+    coros: Iterable[Awaitable[T]], *, return_exceptions: bool = False
+) -> tuple[list[T], list[Exception]]:
+    results: dict[int, T] = {}
+    errors: dict[int, Exception] = {}
+
+    async def wrap(idx: int, coro: Awaitable[T]) -> None:
+        try:
+            results[idx] = await coro
+        except Exception as e:
+            if not return_exceptions:
+                raise
+            errors[idx] = e
+
+    async with asyncio.TaskGroup() as tg:
+        for idx, coro in enumerate(coros):
+            tg.create_task(wrap(idx, coro))
+
+    return _values_sorted_by_key(results), _values_sorted_by_key(errors)
 
 
 async def map[T, R](
@@ -298,6 +348,38 @@ async def map[T, R](
     return await map_tuples(coro_factory, ((param,) for param in params), task_limit=task_limit)
 
 
+async def afilter[T](
+    predicate: Callable[[T], Awaitable[Any]],
+    params: Iterable[T],
+    /,
+    *,
+    task_limit: asyncio.BoundedSemaphore | int | None = None,
+) -> filter[T]:
+    ## TODO use queue for lazy iteration with queue.shutdown when dropping python 3.12
+
+    async def fn(value: T) -> T:
+        if await predicate(value):
+            return value
+        return MISSING
+
+    results = await map(fn, params, task_limit=task_limit)
+    return filter(lambda x: x is not MISSING, results)
+
+
+async def afilter_false[T](
+    predicate: Callable[[T], Awaitable[Any]],
+    params: Iterable[T],
+    /,
+    *,
+    task_limit: asyncio.BoundedSemaphore | int | None = None,
+) -> filter[T]:
+
+    async def new_predicate(x: T) -> bool:
+        return not await predicate(x)
+
+    return await afilter(new_predicate, params, task_limit=task_limit)
+
+
 async def map_tuples[*Ts, R](
     coro_factory: Callable[[*Ts], Awaitable[R]],
     params_batched: Iterable[tuple[*Ts]],
@@ -308,27 +390,104 @@ async def map_tuples[*Ts, R](
     """Map an async factory over a sequence of arguments with optional concurrency cap.
 
     If `task_limit` is given, no more than that many coroutines will be “in flight” at the same time,
-    limiting memory pressure and event loop overhead"""
-    if not task_limit:
+    limiting memory pressure and event loop overhead
+
+    If task_limit is an asyncio.Semaphore, it can be shared across multiple `map_tuples` calls"""
+
+    if task_limit is None:
         return await gather(*(coro_factory(*params) for params in params_batched))
 
-    semaphore = asyncio.BoundedSemaphore(task_limit) if isinstance(task_limit, int) else task_limit
+    if isinstance(task_limit, int):
+        if task_limit < 1:
+            raise ValueError("task limit must be >= 1")
+        semaphore = asyncio.BoundedSemaphore(task_limit)
+    else:
+        semaphore = task_limit
 
-    tasks: list[asyncio.Task[R]] = []
+    results: dict[int, R] = {}
 
-    async def run(coro: Awaitable[R]) -> R:
+    async def run(idx: int, coro: Awaitable[R]) -> None:
         try:
-            return await coro
+            results[idx] = await coro
         finally:
             semaphore.release()
 
     async with asyncio.TaskGroup() as tg:
-        for params in params_batched:
-            _ = await semaphore.acquire()
-            coro = coro_factory(*params)
-            tasks.append(tg.create_task(run(coro)))
+        pending = enumerate(params_batched)
+        while True:
+            await semaphore.acquire()
+            try:
+                idx, params = builtins.next(pending)
+            except StopIteration:
+                semaphore.release()
+                break
+            else:
+                tg.create_task(run(idx, coro_factory(*params)))
 
-    return [t.result() for t in tasks]
+    return _values_sorted_by_key(results)
+
+
+@contextlib.asynccontextmanager
+async def as_completed[*Ts, R](
+    coro_factory: Callable[[*Ts], Awaitable[R]],
+    params_batched: Iterable[tuple[*Ts]],
+    /,
+    *,
+    task_limit: int,
+) -> AsyncGenerator[AsyncIterator[R]]:
+
+    # TODO: use queue.shutdown in python 3.13
+
+    if task_limit < 1:
+        raise ValueError("task_limit must be positive")
+
+    queue = asyncio.Queue[R]()
+    shutdown: asyncio.Event = asyncio.Event()
+    params = iter(params_batched)
+
+    async def worker() -> None:
+        while not shutdown.is_set():
+            try:
+                args = builtins.next(params)
+            except StopIteration:
+                return
+
+            # TODO: How to handle exceptions here? log them?
+            # if this fails, the producer taskgroup explodes
+            # and the other workers are also cancelled
+            result = await coro_factory(*args)
+            if shutdown.is_set():
+                return
+            queue.put_nowait(result)
+
+    async def create_workers() -> None:
+        try:
+            async with asyncio.TaskGroup() as tg:
+                for _ in range(task_limit):
+                    tg.create_task(worker())
+        finally:
+            queue.put_nowait(MISSING)
+
+    async with asyncio.TaskGroup() as tg:
+        producer = tg.create_task(create_workers())
+        consumer = queue_consumer(queue)
+        try:
+            yield consumer
+        finally:
+            shutdown.set()
+            producer.cancel()
+            await consumer.aclose()
+
+
+async def queue_consumer[T](queue: asyncio.Queue[T], stop_sentinel: Any = MISSING) -> AsyncGenerator[T]:
+    while True:
+        result = await queue.get()
+        try:
+            if result is stop_sentinel:
+                return
+            yield result
+        finally:
+            queue.task_done()
 
 
 def run[T](coro: Coroutine[Any, Any, T]) -> T:
@@ -350,13 +509,18 @@ def to_thread[**P, R](fn: Callable[P, R]) -> Callable[P, Coroutine[None, None, R
     return async_run
 
 
+@to_thread
+def move(src: Path, dst: Path) -> None:
+    import shutil
+
+    shutil.move(src, dst)
+
+
 chmod = to_thread(Path.chmod)
-copy = to_thread(shutil.copy)
 exists = to_thread(Path.exists)
 is_dir = to_thread(Path.is_dir)
 is_file = to_thread(Path.is_file)
 mkdir = to_thread(Path.mkdir)
-move = to_thread(shutil.move)
 read_bytes = to_thread(Path.read_bytes)
 read_text = to_thread(Path.read_text)
 resolve = to_thread(Path.resolve)
@@ -460,3 +624,56 @@ def periodic_sleep(period: int, /) -> Callable[[], Awaitable[None]]:
             await asyncio.sleep(0)
 
     return sleep
+
+
+@contextlib.asynccontextmanager
+async def backgroud_task(
+    fn: Callable[[], Awaitable[Any]], *, period: float, name: str | None = None
+) -> AsyncGenerator[None]:
+    "Run a callable very <period>"
+    if period < 0.1:
+        raise ValueError(f"{period = } is too low. Must be > 0.1")
+
+    import contextvars
+
+    done: asyncio.Event = asyncio.Event()
+
+    async def run_forever() -> None:
+        while True:
+            await fn()
+            try:
+                await asyncio.wait_for(done.wait(), period)
+            except TimeoutError:
+                continue
+            else:
+                return
+
+    task = asyncio.create_task(run_forever(), name=name, context=contextvars.copy_context())
+    try:
+        yield
+    finally:
+        done.set()
+        await discard(task)
+
+
+def current_task() -> asyncio.Task[Any]:
+    task = asyncio.current_task()
+    assert task is not None
+    return task
+
+
+def discard(fut: asyncio.Future[Any], /, grace_timeout: float = 0.01) -> asyncio.Future[None]:
+    async def wait_or_cancel() -> None:
+        if fut.done():
+            return
+
+        try:
+            async with asyncio.timeout(grace_timeout):
+                await fut
+        except asyncio.CancelledError:
+            if not fut.done() or current_task().cancelling() > 0:
+                raise
+        except TimeoutError:
+            return
+
+    return asyncio.shield(wait_or_cancel())

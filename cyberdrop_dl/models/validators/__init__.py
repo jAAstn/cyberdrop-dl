@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime
-import re
 from typing import TYPE_CHECKING, Literal, SupportsIndex, SupportsInt, overload
 
 from pydantic import ByteSize, TypeAdapter
@@ -10,11 +9,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    import yarl
+    from cyberdrop_dl.url_objects import AbsoluteHttpURL
 
 
-_DATE_PATTERN_REGEX = r"(\d+)\s*(second|seconds|minute|minutes|hour|hours|day|days|week|weeks|month|months|year|years)"
-_DATE_PATTERN = re.compile(_DATE_PATTERN_REGEX, re.IGNORECASE)
 _BYTE_SIZE_ADAPTER = TypeAdapter(ByteSize)
 
 type _ConvertibleToInt = str | SupportsInt | SupportsIndex
@@ -24,10 +21,10 @@ def bytesize_to_str(value: _ConvertibleToInt) -> str:
     return ByteSize(value).human_readable()
 
 
-def to_yarl_url(value: object) -> yarl.URL:
+def to_yarl_url(value: object) -> AbsoluteHttpURL:
     from cyberdrop_dl.utils import parse_url
 
-    return parse_url(str(value))
+    return parse_url(str(value), trim=False)
 
 
 def to_bytesize(value: ByteSize | str | int) -> ByteSize:
@@ -42,8 +39,14 @@ def change_path_suffix(suffix: str) -> Callable[[Path], Path]:
 
 
 def _str_to_timedelta(input_date: str) -> datetime.timedelta:
+    import re
+
     time_str = input_date.casefold()
-    matches: list[str] = re.findall(_DATE_PATTERN, time_str)
+    matches: list[str] = re.findall(
+        r"(\d+)\s*(second|seconds|minute|minutes|hour|hours|day|days|week|weeks|month|months|year|years)",
+        time_str,
+        re.IGNORECASE,
+    )
     seen_units: set[str] = set()
     time_dict: dict[str, int] = {"days": 0}
 
@@ -114,3 +117,9 @@ def remove_duplicates[T](values: tuple[T, ...]) -> tuple[T, ...]: ...
 
 def remove_duplicates[T](values: list[T] | tuple[T, ...]) -> list[T] | tuple[T, ...]:
     return type(values)(dict.fromkeys(values))
+
+
+def assume_utc[T: datetime.datetime](date: T) -> T:
+    if date.tzinfo is None:
+        return date.replace(tzinfo=datetime.UTC)
+    return date

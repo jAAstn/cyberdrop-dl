@@ -38,9 +38,9 @@ class EHentaiCrawler(Crawler):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case ["g", _, gallery_id]:
-                return await self.gallery(scrape_item, gallery_id)
+                await self.gallery(scrape_item, gallery_id)
             case ["s", _, _]:
-                return await self.image(scrape_item)
+                await self.image(scrape_item)
             case _:
                 raise ValueError
 
@@ -55,7 +55,7 @@ class EHentaiCrawler(Crawler):
 
         async for soup in pages:
             for new_scrape_item in self.iter_children(scrape_item, soup, Selector.ALBUM_IMAGES):
-                self.create_task(self.run(new_scrape_item))
+                self.create_task(self.run(new_scrape_item, check_referer=True))
 
     @error_handling_wrapper
     async def image(self, scrape_item: ScrapeItem) -> None:

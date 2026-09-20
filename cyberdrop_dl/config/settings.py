@@ -3,17 +3,19 @@ import logging
 import random
 from enum import auto
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal, override
+from typing import Annotated, Any, ClassVar, Literal, override
 
 from cyclopts import Parameter
 from pydantic import BaseModel, Field, NonNegativeInt, PrivateAttr
+from pydantic.functional_validators import BeforeValidator
 from pydantic.types import ByteSize, NonNegativeFloat, PositiveFloat, PositiveInt
 
-from cyberdrop_dl.constants import LOGS_DATE_FORMAT, LOGS_DATETIME_FORMAT, CIStrEnum, HashMode
+from cyberdrop_dl.constants import LOGS_DATE_FORMAT, LOGS_DATETIME_FORMAT, CIStrEnum, HashMode, ImpersonateTarget
 from cyberdrop_dl.models import ConfigGroup, ConfigModel
 from cyberdrop_dl.models.types import (
     ByteSizeSerilized,
     CSVPath,
+    ExistingPath,
     FalsyAsNone,
     FormatStr,
     HttpURL,
@@ -76,6 +78,9 @@ class LogFiles(ConfigModel):
     last_forum_post: CSVPath = Path("last_forum_post.csv")
     "Save the URL of the last scraped post from each thread to this file (MUST BE .csv)"
 
+    dedupe: CSVPath = Path("dedupe.csv")
+    "Save every duplicate deleted by the deduper, and the file it matched, to this file (MUST BE .csv)"
+
     @property
     def jsonl_file(self) -> Path:
         return self.main.with_suffix(".results.jsonl")
@@ -87,6 +92,9 @@ class Logs(ConfigGroup, name=None):  # noqa: PLW1641
 
     console_level: FalsyAsNone[LogLevel] = None
     "Only log messages of this level or higher to the console. An empty or `None` value will use the same level as `log_level`"
+
+    http_traffic: Annotated[bool, Parameter(alias="--print-traffic")] = True
+    "Log HTTP requests and responses (at INFO level)"
 
     files: LogFiles = Field(default_factory=LogFiles)
     folder: FalsyAsNone[Path] = None
@@ -161,6 +169,9 @@ class Jdownloader(ConfigGroup, name=None):
     enabled: Annotated[bool, _alias("jdownloader")] = False
     "Send unsupported URLs to Jdownloader"
 
+    deprecated_api: HttpURL | None = None
+    "HTTP URL of a local JDownloader instance to connect to via their deprecated API (insecure, default port=3128)"
+
     autostart: bool = False
     "Immediately start downloads as soon as they are sent"
 
@@ -169,6 +180,12 @@ class Jdownloader(ConfigGroup, name=None):
 
     whitelist: set[NonEmptyStr] = Field(default_factory=set)
     "Only send unsupported URLs from these domains to Jdownloader. An empty list means 'send all URLs'"
+
+    @override
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
+        if self.deprecated_api and self.deprecated_api.scheme != "http":
+            raise ValueError("Deprecated API URL must have an 'http' scheme")
 
 
 class SortFormats(ConfigModel):
@@ -267,7 +284,8 @@ class Hashing(ConfigGroup, name=None):
     _extra_hashes: tuple[Literal["md5", "sha256"], ...] = ()
 
     @override
-    def model_post_init(self, *_) -> None:
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
         self.re_compute()
 
     def re_compute(self) -> None:
@@ -300,6 +318,9 @@ class Downloads(ConfigGroup):
     speed_limit: ByteSizeSerilized = ByteSize(0)
     "Max speed rate (in bytes per second) to limit downloads (combined)"
 
+    back_pressure: bool = True
+    "Throttle scrape requests if there are too many downloads queued for the same site"
+
     jitter: NonNegativeFloat = 0
     "Wait a random additional number of seconds in between 0 and <jitter> before downloads"
 
@@ -314,12 +335,28 @@ class Downloads(ConfigGroup):
         return self.delay + random.uniform(0, self.jitter)
 
 
+@Parameter(name="*")
+class TLS(ConfigModel):
+    verify: Annotated[bool, Parameter(alias="ssl")] = True
+    min_version: Annotated[Literal["1.2", "1.3"], BeforeValidator(str), Parameter(name="tls.min-version")] = "1.2"
+    ca_certs: tuple[ExistingPath, ...] = ()
+
+
 class Network(ConfigGroup):
     dump_responses: bool = False
-    "Save text/HTML/JSON responses to disk (flaresolverr responses are excluded)"
+    "Save text/HTML/JSON responses to disk (Flaresolverr responses are excluded)"
 
     flaresolverr: FalsyAsNone[HttpURL] = None
-    "HTTP URL of an existing flaresolverr instance"
+    "HTTP URL of an existing Flaresolverr instance"
+
+    flaresolverr_use_session: bool = True
+    "Create a custom session before making any request with Flaresolverr"
+
+    flaresolverr_wait: NonNegativeInt = 0
+    "Force Flaresolverr to wait (at least) this number of seconds before returning the results, to allow dynamic content to load"
+
+    flaresolverr_concurrency: PositiveInt = 1
+    "Number of concurrent requests to make with Flaresolverr"
 
     proxy: Annotated[FalsyAsNone[HttpURL], Parameter(alias=("http-proxy"))] = None
     "HTTP/HTTPS proxy"
@@ -334,16 +371,19 @@ class Network(ConfigGroup):
             Literal["truststore", "certifi", "truststore+certifi"],
             strings.pre_validator(to_lower=True, strip=True),
         ]
-    ] = "truststore+certifi"
-    user_agent: NonEmptyStr = "Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0"
-    impersonate: FalsyAsNone[Literal["chrome", "edge", "safari", "safari_ios", "chrome_android", "firefox"]] = None
+    ] = Field(default="truststore+certifi", deprecated=True)
+    tls: TLS = Field(default_factory=TLS)
+
+    user_agent: NonEmptyStr = "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"
+    impersonate: FalsyAsNone[ImpersonateTarget] = None
     "Use this target as impersonation for all scrape requests"
 
-    @property
-    def curl_timeout(self) -> float | tuple[float, float]:
-        if self.read_timeout is None:
-            return self.connection_timeout
-        return self.connection_timeout, self.read_timeout
+    @override
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
+        # https://github.com/FlareSolverr/FlareSolverr/issues/1685
+        if self.flaresolverr_concurrency > 1 and self.flaresolverr_use_session:
+            raise ValueError("'flaresolverr_concurrency' can't be > 1 if 'flaresolverr_use_session' is True")
 
 
 class UIMode(CIStrEnum):

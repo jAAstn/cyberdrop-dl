@@ -27,14 +27,14 @@ def _safe_is_dir(entry: os.DirEntry[str]) -> bool:
         return False
 
 
-def _safe_delete(entry: os.DirEntry[str]) -> bool:
+def _safe_delete_empty(entry: os.DirEntry[str]) -> bool:
     try:
         os.unlink(entry)  # noqa: PTH108
     except OSError as e:
         logger.error(f"Unable to delete '{entry.path}' ({e!r})")
         return False
     else:
-        logger.debug(f"Deleted '{entry.path}'")
+        logger.debug(f"Deleted '{entry.path}' (empty file)")
         return True
 
 
@@ -87,12 +87,22 @@ def rm_empty_dirs(path: Path) -> None:
     _ = _rm_empty_dirs(path, exclude=exclude)
 
 
+def _should_ignore(entry: os.DirEntry[str]) -> bool:
+    if entry.name.startswith("."):
+        return True
+    stem, _, ext = entry.name.rpartition(".")
+    if not stem:
+        return False
+    suffix = f".{ext.casefold()}"
+    return suffix in {".py", ".anchor"}
+
+
 def _rm_empty_dirs(dirname: Path | str, exclude: Container[str] = ()) -> bool:
     is_empty = True
 
     try:
         for entry in os.scandir(dirname):
-            if entry.name.startswith(".") or entry.path in exclude:
+            if _should_ignore(entry) or entry.path in exclude:
                 is_empty = False
                 continue
 
@@ -101,7 +111,7 @@ def _rm_empty_dirs(dirname: Path | str, exclude: Container[str] = ()) -> bool:
                 if not deleted:
                     is_empty = False
             elif _safe_get_size(entry) == 0:
-                deleted = _safe_delete(entry)
+                deleted = _safe_delete_empty(entry)
                 if not deleted:
                     is_empty = False
             else:

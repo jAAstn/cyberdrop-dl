@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic.alias_generators import to_snake
 
-from cyberdrop_dl.crawlers.crawler import Crawler, SupportedPaths
+from cyberdrop_dl.crawlers.crawler import Crawler, DownloadConfig, SupportedPaths
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
 from cyberdrop_dl.utils import css
 from cyberdrop_dl.utils.errors import error_handling_wrapper
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from cyberdrop_dl.url_objects import ScrapeItem
 
 
+@DownloadConfig(impersonate=True)
 class VSCOCrawler(Crawler):
     SUPPORTED_PATHS: ClassVar[SupportedPaths] = {
         "Media": (
@@ -33,9 +34,9 @@ class VSCOCrawler(Crawler):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case [user, "gallery"]:
-                return await self.gallery(scrape_item, user)
+                await self.gallery(scrape_item, user)
             case [user, "media" | "video" as type_, media_id]:
-                return await self.media(scrape_item, user, type_, media_id)
+                await self.media(scrape_item, user, type_, media_id)
             case _:
                 raise ValueError
 

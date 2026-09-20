@@ -54,7 +54,7 @@ class XVideoSharingCrawler(XFSCrawler, is_abc=True):
         if await self.check_complete(scrape_item.url):
             return
 
-        referer = scrape_item.referer or (scrape_item.parents[-1] if scrape_item.parents else None)
+        referer = scrape_item.get_referer()
         m3u8_url = await self.request_stream(video_id, referer)
         m3u8, info = await self.request_m3u8_playlist(m3u8_url)
         filename = self.create_custom_filename(
@@ -112,6 +112,6 @@ class EmbedOnlyMixin(_XVSMixinBase):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case ["embed", video_id]:
-                return await self.embed(scrape_item, video_id)
+                await self.embed(scrape_item, video_id)
             case _:
                 raise ValueError

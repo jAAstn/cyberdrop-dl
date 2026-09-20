@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import itertools
 import re
 from typing import TYPE_CHECKING, Any, ClassVar, final
 
+import yarl
+
 from cyberdrop_dl.clients.http import HTTPConfig
 from cyberdrop_dl.crawlers.crawler import Crawler, SupportedPaths, URLConfig
 from cyberdrop_dl.exceptions import DownloadError, ScrapeError
 from cyberdrop_dl.mediaprops import Resolution
-from cyberdrop_dl.utils import css, extr_text, open_graph, parse_url
+from cyberdrop_dl.utils import css, extr_text, json_ld, open_graph, parse_url
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 
 if TYPE_CHECKING:
@@ -81,22 +84,22 @@ class KernelVideoSharingCrawler(Crawler, is_abc=True):
             return url / ""
         return url
 
-    async def fetch(self, scrape_item: ScrapeItem) -> None:  # noqa: PLR0911
+    async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case ["categories" | "tags" as type_, name]:
-                return await self.collection(scrape_item, name, type_)
+                await self.collection(scrape_item, name, type_)
             case ["search", query]:
-                return await self.search(scrape_item, query)
+                await self.search(scrape_item, query)
             case ["members", member_id, "public_videos" | "favourite_videos" | "private_videos", *_]:
-                return await self.profile(scrape_item, member_id, entire_profile=False)
+                await self.profile(scrape_item, member_id, entire_profile=False)
             case ["members", member_id, *_]:
-                return await self.profile(scrape_item, member_id)
+                await self.profile(scrape_item, member_id)
             case ["videos" | "video", _, *_]:
-                return await self.video(scrape_item)
+                await self.video(scrape_item)
             case ["albums" | "album", _]:
-                return await self.album(scrape_item)
+                await self.album(scrape_item)
             case ["albums" | "album", _, _, *_]:
-                return await self.picture(scrape_item)
+                await self.picture(scrape_item)
             case _:
                 if query := scrape_item.url.query.get("q"):
                     return await self.search(scrape_item, query)
@@ -153,7 +156,7 @@ class KernelVideoSharingCrawler(Crawler, is_abc=True):
     async def _iter_videos(self, scrape_item: ScrapeItem, url: AbsoluteHttpURL | None = None) -> None:
         async for soup in self.web_pager(url or scrape_item.url):
             for new_scrape_item in self.iter_children(scrape_item, soup, self.THUMBNAIL_SELECTOR):
-                self.create_task(self.run(new_scrape_item))
+                self.create_task(self.run(new_scrape_item, check_referer=True))
 
     def _extract_upload_date(self, soup: BeautifulSoup) -> float | None:
         if date_str := _extract_upload_date(soup):
@@ -165,7 +168,7 @@ class KernelVideoSharingCrawler(Crawler, is_abc=True):
             return
 
         soup = await self.request_soup(scrape_item.url)
-        video = extract_kvs_video(self, soup)
+        video = await asyncio.to_thread(extract_kvs_video, self, soup)
         name = video.url.name or video.url.parent.name
         filename, ext = self.get_filename_and_ext(name)
         scrape_item.uploaded_at = self._extract_upload_date(soup)
@@ -244,6 +247,13 @@ def extract_kvs_video(cls: Crawler, soup: BeautifulSoup) -> KVSVideo:
     if soup.select_one(Selector.UNAUTHORIZED):
         raise ScrapeError(401, "Private video")
 
+    try:
+        kt_player_url = yarl.URL(css.select(soup, "script[src*='/kt_player.js?v=']", "src"))
+    except (ValueError, css.SelectorError):
+        pass
+    else:
+        cls.get_logger().debug(f"Found KVS player version {kt_player_url.query['v']}")
+
     script = css.select_text(soup, Selector.FLASHVARS)
     video = _parse_video_vars(script)
     if not video.title:
@@ -254,13 +264,14 @@ def extract_kvs_video(cls: Crawler, soup: BeautifulSoup) -> KVSVideo:
 
 
 def _extract_upload_date(soup: BeautifulSoup) -> str | None:
+
     try:
         return open_graph.get("video:release_date", soup) or css.select(
             soup, "meta[property='video:release_date']", "content"
         )
     except css.SelectorError:
         try:
-            return css.json_ld(soup, "uploadDate")["uploadDate"]
+            return json_ld.find_attr(soup, "uploadDate")
         except (LookupError, ValueError, css.SelectorError):
             # Human date parsing was removed from parse_date. This fallback
             # no longer supports relative strings like "2 hours ago".
@@ -293,7 +304,7 @@ def _parse_formats(flashvars: dict[str, str]) -> Generator[tuple[Resolution, Abs
     parse_resolution = Resolution.make_parser()
     for key in url_keys:
         url_str = flashvars[key]
-        if "/get_file/" not in url_str:
+        if not ("/get_file/" in url_str or "/get_stream/" in url_str):
             continue
         quality = flashvars.get(f"{key}_text")
         resolution = Resolution.highest() if quality in {"HQ", "Best Quality"} else parse_resolution(quality)
@@ -351,6 +362,7 @@ def _extract_album_id(soup: BeautifulSoup) -> str | None:
         return None
 
 
+@URLConfig(trim=False)
 class GenericKVSCrawler(KernelVideoSharingCrawler, is_generic=True):
     SUPPORTED_PATHS: ClassVar[SupportedPaths] = {
         "Video": (

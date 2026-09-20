@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self, override
 
 from cyberdrop_dl.clients.http import HTTPConfig
 from cyberdrop_dl.crawlers.crawler import Crawler, SupportedPaths, auto_task_id
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Mapping
 
     from cyberdrop_dl.url_objects import ScrapeItem
-    from cyberdrop_dl.utils import m3u8
+
 
 _PRIMARY_URL = AbsoluteHttpURL("https://www.tiktok.com/")
 _API_URL = AbsoluteHttpURL("https://www.tikwm.com/api/")
@@ -83,8 +83,16 @@ class MusicInfo(DictDataclass):
 class TikTokCrawler(Crawler):
     SUPPORTED_PATHS: ClassVar[SupportedPaths] = {
         "User": "/@<user>",
-        "Video": "/@<user>/video/<video_id>",
-        "Photo": "/@<user>/photo/<photo_id>",
+        "Video": (
+            "/@<user>/video/<video_id>",
+            "/@/video/<video_id>",
+            "/share/video/<video_id>",
+        ),
+        "Photo": (
+            "/@<user>/photo/<photo_id>",
+            "/@/photo/<photo_id>",
+            "/share/photo/<photo_id>",
+        ),
     }
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = _PRIMARY_URL
     DOMAIN: ClassVar[str] = "tiktok"
@@ -110,10 +118,11 @@ class TikTokCrawler(Crawler):
             case [_, "video" | "photo" | "v" as type_, media_id]:
                 media_id = media_id.removesuffix(".html")
                 if type_ != "photo" and self.download_src_quality_videos:
-                    return await self.src_quality_media(scrape_item, media_id)
-                return await self.media(scrape_item, media_id)
+                    await self.src_quality_media(scrape_item, media_id)
+                    return
+                await self.media(scrape_item, media_id)
             case [profile] if profile.startswith("@"):
-                return await self.profile(scrape_item, profile.removeprefix("@"))
+                await self.profile(scrape_item, profile.removeprefix("@"))
             case _:
                 raise ValueError
 
@@ -251,8 +260,7 @@ class TikTokCrawler(Crawler):
         )
         scrape_item.add_children()
 
-    async def handle_media_item(self, media_item: MediaItem, m3u8: m3u8.Rendition | None = None) -> None:
+    @override
+    def _prepare_media_item(self, media_item: MediaItem) -> None:
         if media_item.ext == ".mp3":
             media_item.download_folder /= "Audios"
-
-        await super().handle_media_item(media_item, m3u8)

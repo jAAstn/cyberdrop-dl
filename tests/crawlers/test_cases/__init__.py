@@ -17,6 +17,7 @@ class Result(TypedDict):
     album_id: NotRequired[str | type | None]
     uploaded_at: NotRequired[int | type | None]
     download_folder: NotRequired[str | type]
+    thumbnail: NotRequired[str | type | None]
 
 
 @dataclasses.dataclass(slots=True)
@@ -24,6 +25,7 @@ class CrawlerTestCase:
     domain: str
     url: str
     results: list[Result]
+    args: tuple[str, ...] = ()
     description: str | None = None
     fail: bool | str | int = False
     xfail: str | None = None

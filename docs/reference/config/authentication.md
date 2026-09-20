@@ -35,7 +35,7 @@ auth:
     api_key: <my_api_key>
 ```
 
-You can get your API key from <https://gofile.io/myProfile>
+You can get your API key from <https://gofile.io/myprofile>
 
 </details>
 
@@ -48,9 +48,9 @@ These are the same values you use in `JDownloder 2` -> `settings` -> `MyJDownloa
 ```yaml
 auth:
   jdownloader:
-    device: <my_device_name>
+    device_name: <my_device_name>
     password: <my_password>
-    username: <my_username>
+    username: <my_username/email>
 ```
 
 </details>

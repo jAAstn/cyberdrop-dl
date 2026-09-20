@@ -15,7 +15,17 @@ from cyberdrop_dl.crawlers import SKIP_DOWNLOAD
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-KEYS = ("url", "filename", "debrid_url", "original_filename", "referer", "album_id", "uploaded_at", "download_folder")
+KEYS = (
+    "url",
+    "filename",
+    "debrid_url",
+    "original_filename",
+    "referer",
+    "album_id",
+    "uploaded_at",
+    "download_folder",
+    "thumbnail",
+)
 ROOT = Path(__file__).resolve().parents[2]
 TEST_FOLDER = ROOT / "tests/crawlers/test_cases"
 
@@ -26,6 +36,8 @@ def parse_jsonl(file: Path) -> Generator[tuple[str, str, TestCase]]:
     base = Path.cwd() / Config().download_folder
     for line in file.read_text(encoding="utf-8").splitlines():
         media = json.loads(line)
+        if media["url"].startswith("metadata:"):
+            continue
         url = media["parents"][0] if media["parents"] else media["referer"]
         media["download_folder"] = "re:" + str(Path(media["download_folder"]).relative_to(base))
         yield media["domain"], url, {key: media[key] for key in KEYS}
@@ -51,6 +63,11 @@ def run(url_txt: Path, main_log: Path) -> None:
                 str(url_txt),
                 "--log-file",
                 str(main_log),
+                "--flaresolverr",
+                "http://localhost:8191",
+                "--no-flaresolverr-use-session",
+                "--flaresolverr-concurrency",
+                "3",
                 "--dump-json",
                 "--ui",
                 "simple",

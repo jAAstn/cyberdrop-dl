@@ -15,8 +15,7 @@ from cyberdrop_dl.utils.errors import error_handling_wrapper
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from curl_cffi.requests.session import HttpMethod
-
+    from cyberdrop_dl.clients import HttpMethod
     from cyberdrop_dl.clients.request import RequestParams
     from cyberdrop_dl.url_objects import ScrapeItem
     from cyberdrop_dl.utils import m3u8
@@ -49,11 +48,11 @@ class TwitchCrawler(Crawler):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case [_, "v", video_id]:
-                return await self.vod(scrape_item, video_id)
+                await self.vod(scrape_item, video_id)
             case ["video" | "videos", video_id]:
-                return await self.vod(scrape_item, video_id)
+                await self.vod(scrape_item, video_id)
             case ["collections", collection_id]:
-                return await self.collection(scrape_item, collection_id)
+                await self.collection(scrape_item, collection_id)
             case [*_, "clip", slug]:
                 await self.clip(scrape_item, slug)
             case ["embed"] if slug := scrape_item.url.query.get("clip"):
@@ -62,11 +61,11 @@ class TwitchCrawler(Crawler):
                 await self.clip(scrape_item, slug)
             case _:
                 if video_id := scrape_item.url.query.get("video"):
-                    return await self.vod(scrape_item, video_id)
-                if slug := scrape_item.url.query.get("clip"):
-                    return await self.clip(scrape_item, slug)
-
-                raise ValueError
+                    await self.vod(scrape_item, video_id)
+                elif slug := scrape_item.url.query.get("clip"):
+                    await self.clip(scrape_item, slug)
+                else:
+                    raise ValueError
 
     def __post_init__(self) -> None:
         self.api: TwitchAPI = TwitchAPI.from_crawler(self)
@@ -139,7 +138,7 @@ class TwitchCrawler(Crawler):
 
         for edge in collection["items"]["edges"]:
             web_url = self.PRIMARY_URL / "videos" / edge["node"]["id"]
-            self.create_task(self.run(scrape_item.create_child(web_url)))
+            self.create_task(self.run(scrape_item.create_child(web_url), check_referer=True))
             scrape_item.add_children()
 
     @error_handling_wrapper
@@ -159,7 +158,7 @@ class TwitchCrawler(Crawler):
             ".mp4",
             file_id=slug,
             resolution=best.resolution,
-            audio_codec=f"{round(best.fps)}fps" if best.fps > 45 else None,
+            fps=round(best.fps) if best.fps > 45 else None,
         )
         source = best.url.update_query(token=access_token["value"], sig=access_token["signature"])
         await self.handle_file(source, scrape_item, title, custom_filename=filename)
@@ -233,7 +232,7 @@ class TwitchAPI(API):
             {
                 "slug": slug,
             },
-            "0a02bb974443b576f5579aab0fef1d4b7f44e58a8a256f0c5adfead0db70640f",
+            "2db6a3b20eabf510bd3cf465ae2408834b59eb6b8af89ca73ab1486cacecfb63",
         )
         clip = resp["data"]["clip"]
         if clip is None:

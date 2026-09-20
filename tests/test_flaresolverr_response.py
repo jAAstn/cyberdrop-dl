@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING, Any
 
 from cyberdrop_dl.clients.flaresolverr import Solution, _parse_cookies
-from cyberdrop_dl.clients.response import _FlareSolverrResponse, _infer_content_type_from_body
+from cyberdrop_dl.clients.response import FlareSolverrResponse, _infer_content_type_from_body
+
+if TYPE_CHECKING:
+    import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures: example FlareSolverr JSON responses
 # ---------------------------------------------------------------------------
 
-FLARESOLVERR_RESPONSE_EMPTY_HEADERS = {
+FLARESOLVERR_RESPONSE_EMPTY_HEADERS: dict[str, Any] = {
     "status": "ok",
     "message": "Challenge solved!",
     "solution": {
@@ -36,7 +40,34 @@ FLARESOLVERR_RESPONSE_EMPTY_HEADERS = {
     "version": "3.4.6",
 }
 
-FLARESOLVER_RESP_JSON = {
+FLARESOLVER_RESP_JSON_WRAPPED_IN_HTML: dict[str, Any] = {
+    "status": "ok",
+    "message": "Challenge solved!",
+    "solution": {
+        "url": "https://www.tikwm.com/api/user/posts?unique_id=user_embongngo&count=50&cursor=0",
+        "status": 200,
+        "cookies": [
+            {
+                "domain": ".tikwm.com",
+                "expiry": 1819086364,
+                "httpOnly": True,
+                "name": "cf_clearance",
+                "path": "/",
+                "sameSite": "None",
+                "secure": True,
+                "value": "uOF3vEc7QtZfPUB28qZfCy.GKmByEgAyDpoyO9EYfSU-1787550364-1.2.1.1-HzZDz",
+            }
+        ],
+        "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        "headers": {},
+        "response": '<html><head><meta name="color-scheme" content="light dark"><meta charset="utf-8"></head><body><pre>{"code":0,"msg":"success","processed_time":0.4496,"data":{}}</pre><div class="json-formatter-container"></div></body></html>',
+    },
+    "startTimestamp": 1787550355291,
+    "endTimestamp": 1787550367316,
+    "version": "3.4.6",
+}
+
+FLARESOLVER_RESP_JSON: dict[str, Any] = {
     "status": "ok",
     "message": "Challenge not detected!",
     "solution": {
@@ -230,25 +261,26 @@ def test_solution_from_dict_json_resp() -> None:
     assert type(solution.content) is dict
 
 
-async def test_flaresolverr_response_infers_html_from_empty_headers() -> None:
+def test_flaresolverr_response_infers_html_from_empty_headers(logs: pytest.LogCaptureFixture) -> None:
     """When FlareSolverr returns empty headers, content-type should be inferred from the body."""
     solution = Solution.from_dict(FLARESOLVERR_RESPONSE_EMPTY_HEADERS["solution"])
-    response = _FlareSolverrResponse.create(solution)
+    response = FlareSolverrResponse.create(solution)
     assert response.content_type == "text/html"
     assert response.status == 200
     assert response.location is None
+    assert len(logs.messages) == 0
 
 
 async def test_flaresolverr_response_reads_text() -> None:
     solution = Solution.from_dict(FLARESOLVERR_RESPONSE_EMPTY_HEADERS["solution"])
-    response = _FlareSolverrResponse.create(solution)
+    response = FlareSolverrResponse.create(solution)
     text = await response.text()
     assert "<html>" in text
 
 
 async def test_flaresolverr_response_from_json_resp() -> None:
     solution = Solution.from_dict(FLARESOLVER_RESP_JSON["solution"])
-    response = _FlareSolverrResponse.create(solution)
+    response = FlareSolverrResponse.create(solution)
     assert not response._text
     assert response.content_type == "application/json"
     assert response._get_content() == solution.content
@@ -256,7 +288,7 @@ async def test_flaresolverr_response_from_json_resp() -> None:
     assert await response.text() == ""
 
 
-async def test_flaresolverr_response_with_explicit_content_type() -> None:
+def test_flaresolverr_response_with_explicit_content_type() -> None:
     """When headers contain Content-Type, it should be used instead of inference."""
     solution_data = {
         **FLARESOLVERR_RESPONSE_EMPTY_HEADERS["solution"],
@@ -264,16 +296,43 @@ async def test_flaresolverr_response_with_explicit_content_type() -> None:
         "response": '{"data": True}',
     }
     solution = Solution.from_dict(solution_data)
-    response = _FlareSolverrResponse.create(solution)
+    response = FlareSolverrResponse.create(solution)
     assert response.content_type == "application/json"
 
 
-async def test_flaresolverr_response_empty_body_and_empty_headers() -> None:
-    """Empty body + empty headers should result in empty content-type string."""
+def test_flaresolverr_response_empty_body_and_empty_headers(logs: pytest.LogCaptureFixture) -> None:
+    """Empty body + empty headers should assume text/html"""
     solution_data = {
         **FLARESOLVERR_RESPONSE_EMPTY_HEADERS["solution"],
         "response": "",
     }
     solution = Solution.from_dict(solution_data)
-    response = _FlareSolverrResponse.create(solution)
-    assert response.content_type == ""
+    solution.id = "1"
+    response = FlareSolverrResponse.create(solution)
+    assert response.content_type == "text/html"
+    assert len(logs.records) == 1
+    assert (
+        logs.records[0].message == "Unable to detect content type of Flaresolverr response [id=1], assuming 'text/html'"
+    )
+
+
+async def test_flaresolverr_response_from_json_resp_wrapped_in_html() -> None:
+    solution = Solution.from_dict(FLARESOLVER_RESP_JSON_WRAPPED_IN_HTML["solution"])
+    resp = FlareSolverrResponse.create(solution)
+    assert resp._text
+    assert resp.content_type == "text/html"
+    assert type(solution.content) is str
+    data = await resp.json()
+    assert type(data) is dict
+    assert resp.content_type == "application/json"
+    assert data == await resp.json()
+    assert data is not await resp.json()
+    assert type(solution.content) is dict
+    assert data == {
+        "code": 0,
+        "msg": "success",
+        "processed_time": 0.4496,
+        "data": {},
+    }
+    data["extra_key"] = 0
+    assert data != await resp.json()

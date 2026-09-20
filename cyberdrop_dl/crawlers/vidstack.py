@@ -13,8 +13,7 @@ from cyberdrop_dl.utils.crypto import aes_cbc_decrypt
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 
 if TYPE_CHECKING:
-    from curl_cffi.requests.session import HttpMethod
-
+    from cyberdrop_dl.clients import HttpMethod
     from cyberdrop_dl.clients.request import RequestParams
     from cyberdrop_dl.url_objects import ScrapeItem
 
@@ -52,7 +51,7 @@ class VidStackCrawler(Crawler):
         if await self.check_complete(scrape_item.url):
             return
 
-        video = await self.api.video(video_id, scrape_item.referer)
+        video = await self.api.video(video_id, scrape_item.get_referer())
         m3u8, info = await self.request_m3u8_playlist(video.src)
         custom_filename = self.create_custom_filename(
             video.title,

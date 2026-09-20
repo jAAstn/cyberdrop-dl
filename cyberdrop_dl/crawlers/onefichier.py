@@ -57,7 +57,7 @@ class OneFichierCrawler(Crawler):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case [] | [""] if _get_file_id(scrape_item.url.query):
-                return await self.file(scrape_item)
+                await self.file(scrape_item)
             case _:
                 raise ValueError
 
@@ -110,7 +110,7 @@ class OneFichierCrawler(Crawler):
 
     async def _request_download(self, url: AbsoluteHttpURL, password: str | None) -> AbsoluteHttpURL:
         data = {"pass": password} if password else {}
-        if not self.config.network.ssl_context:
+        if not self.config.network.tls.verify:
             data["dl_no_ssl"] = "on"
 
         soup = await self.request_soup(url, method="POST", data=data or None)

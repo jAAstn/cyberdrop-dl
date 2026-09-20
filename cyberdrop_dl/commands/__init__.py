@@ -1,9 +1,12 @@
 import dataclasses
+import logging
 from collections.abc import Generator, Sequence
 from pathlib import Path
 from typing import Annotated, Any
 
 from cyclopts import Parameter, Token, validators
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_path(type_: type[Path], tokens: Sequence[Token]) -> Path:
@@ -38,3 +41,17 @@ class CLIarguments:
 
     def __json__(self) -> dict[str, Any]:
         return {k: None if v is None else str(v) for k, v in self}
+
+
+def open_folder(folder: Path) -> None:
+    if not folder.exists():
+        from cyberdrop_dl.prompts import ask_should_create_folder
+
+        if not ask_should_create_folder(folder):
+            return
+
+        folder.mkdir(parents=True)
+
+    from cyberdrop_dl.utils import file_browser
+
+    file_browser.open_folder(folder)

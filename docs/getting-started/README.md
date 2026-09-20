@@ -66,7 +66,7 @@ However, `cyberdrop-dl` has a ton of configuration options if you want more cont
 - A cache file (JSON)
 
 Additionally, a dedicated `logs` folder is created to store logs files of a session.
-On Windows, all files are stored in `%AppData%/cyberdrop-dl`, with the logs folder being `%AppData%/cyberdrop-dl/logs`
+On Windows, all files are stored in `%AppData%/cyberdrop-dl`, with the logs folder being `%AppData%/cyberdrop-dl/Logs`
 On Unix systems, `cyberdrop-dl` follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/0.8/) to store application files.
 
 These are the default locations used on each platform
@@ -77,6 +77,14 @@ These are the default locations used on each platform
 | Cache       | `%AppData%/cyberdrop-dl/cache.json`   | `${XDG_CACHE_HOME}/cyberdrop-dl/cache.json` or `~/.cache/cyberdrop-dl/cache.json`          |
 | Database    | `%AppData%/cyberdrop-dl/cyberdrop.db` | `${XDG_DATA_HOME}/cyberdrop-dl/cyberdrop.db` or `~/.local/share/cyberdrop-dl/cyberdrop.db` |
 | Logs        | `%AppData%/cyberdrop-dl/Logs`         | `${XDG_STATE_HOME}/cyberdrop-dl/logs` or `~/.local/state/cyberdrop-dl/logs`                |
+
+{% hint style="info" %}
+A second config file can be created at the same location as the current `--config-file` with the suffix (`.override`)
+
+Settings defined in the override file will replace settings on the main file.
+
+ex: `/.config/cyberdrop-dl/config.yaml`, `/.config/cyberdrop-dl/config.override.yaml`.
+{% endhint %}
 
 ### See also
 

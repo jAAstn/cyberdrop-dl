@@ -8,7 +8,7 @@ Only log messages of this level or higher to the main log file, according to [Py
 
 | Level      | Value | Description                                                                                        |
 | ---------- | ----- | -------------------------------------------------------------------------------------------------- |
-| `DEBUG`    | 10    | Offers detailed information and HTTP requests details, typically useful to troubleshoot problems   |
+| `DEBUG`    | 10    | Offers detailed information, typically useful to troubleshoot problems                             |
 | `INFO`     | 20    | Provides general information about scrape and download progress                                    |
 | `WARNING`  | 30    | Potential issues or something that might need attention (e.g. `Login wasn't provided for <FORUM>`) |
 | `ERROR`    | 40    | Serious problem preventing `cyberdrop-dl` to execute some function                                 |
@@ -24,10 +24,6 @@ Using anything other that `DEBUG` makes troubleshooting issues harder. Practical
 (with a large number of input URLs) to minimize the log files sizes
 {% endhint %}
 
-{% hint style="warning" %}
-`DEBUG` logs raw HTTP requests to the main log file. These requests may have personally identifiable information like your IP or login credentials for sites in cookies/headers
-{% endhint %}
-
 # `console_level`
 
 | Type                                                      | Default |
@@ -39,6 +35,23 @@ Only log messages of this level or higher to the console. A `null` value will us
 ```yaml
 logs:
   level: null
+```
+
+# `http_traffic`
+
+| Type   | Default |
+| ------ | ------- |
+| `bool` | `true`  |
+
+Log HTTP requests and responses (at INFO level)
+
+{% hint style="warning" %}
+These requests may have personally identifiable information like your IP or login credentials for sites in cookies/headers.
+{% endhint %}
+
+```yaml
+logs:
+  http_traffic: true
 ```
 
 # `expire_after`
@@ -176,4 +189,20 @@ Save the URL of the last scraped post from each thread to this file. For relativ
 logs:
   files:
     unsupported: last_forum_post.csv
+```
+
+## `dedupe`
+
+| Type   | Default      | Restrictions                                  |
+| ------ | ------------ | --------------------------------------------- |
+| `Path` | `dedupe.csv` | extension will always be overridden to `.csv` |
+
+Path of the dedupe log file. For relative paths, the final path will be `logs.folder` / `logs.files.dedupe`
+
+Every duplicate that the deduper deletes is saved here, together with the file it matched and their shared hash. The file is only created if at least one duplicate was deleted.
+
+```yaml
+logs:
+  files:
+    dedupe: dedupe.csv
 ```

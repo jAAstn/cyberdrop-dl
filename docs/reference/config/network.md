@@ -6,7 +6,7 @@
 
 The number of seconds to wait while connecting to a website before timing out
 
-{% hint style="info" %} This value will also be used for Flaresolverr (if enabled) as the max number of seconds to solve a CAPTCHA challenge {% endhint %}
+{% hint style="info" %} This value will also be used for Flaresolverr (if enabled) as the max number of seconds to solve a challenge {% endhint %}
 
 ```yaml
 network:
@@ -62,6 +62,13 @@ network:
 ```
 
 {% hint style="info" %}
+You can use any software with Flaresolverr like capabilities as long as it supports the `/v1` endpoint.
+
+You may need to disable sessions with `flaresolverr_use_session`
+
+{% endhint %}
+
+{% hint style="info" %}
 `0.0.0.0` is NOT a valid IP address. To set up a flaresolverr instance running on the same machine as CDL, use `127.0.0.1` as the IP
 {% endhint %}
 
@@ -69,6 +76,39 @@ network:
 This wiki does not cover flaresolverr setup process. If you need help, refer to their documentation. Please do not open issues related to flaresolverr or `DDoS-Guard`.
 See: [How to extract cookies (DDoSGuard or login errors) #839](https://github.com/Cyberdrop-DL/cyberdrop-dl/discussions/839) for alternatives using cookies
 {% endhint %}
+
+# `flaresolverr_use_session`
+
+| Type   | Default |
+| ------ | ------- |
+| `bool` | `true`  |
+
+Create a custom flaresolverr session that keeps cookies. This reduces the likelihood of CF challenges and speeds up requests since Flaresolverr won't
+have to launch a new browser instance on every new one.
+
+Set this to `false` if you are using other Flaresolverr like software that supports the `v1` endpoint but does not support the `sessions.create` command
+
+# `flaresolverr_concurrency`
+
+| Type          | Default |
+| ------------- | ------- |
+| `PositiveInt` | `1`     |
+
+Number of concurrent requests to make with Flaresolverr
+
+{% hint style="warning" %}
+if `flaresolverr_use_session` is True, `flaresolverr_concurrency` **must be** 1. Sessions can only handle 1 request at a time.
+{% endhint %}
+
+# `flaresolverr_wait`
+
+| Type             | Default |
+| ---------------- | ------- |
+| `NonNegativeInt` | `0`     |
+
+Force Flaresolverr to wait (at least) this number of seconds before returning the results, to allow dynamic content to load.
+
+Equivalent to the `waitInSeconds` param of the `request.get` command
 
 # `proxy`
 
@@ -102,11 +142,11 @@ Flaresolverr responses are excluded. They are never dumped to disk
 
 # `impersonate`
 
-| Type                                                                             | Default | Action        |
-| -------------------------------------------------------------------------------- | ------- | ------------- |
-| `chrome", "edge", "safari", "safari_ios", "chrome_android", "firefox"` or `null` | `null`  | `store_const` |
+| Type                                                                             | Default |
+| -------------------------------------------------------------------------------- | ------- |
+| `chrome", "edge", "safari", "safari_ios", "chrome_android", "firefox"` or `null` | `null`  |
 
-Impersonation allows CDL to make requests and appear to be a legitimate web browser. This helps bypass bot-protection on some sites and it's required for any site that only accepts HTTP2 connections.
+Impersonation allows CDL to make requests as a real web browser. This helps bypass bot-protection on some sites and it's required for any site that only accepts HTTP2 connections.
 
 - The default value (`null`) means CDL will automatically use impersonation for crawlers that were programmed to use it.
 - Passing an specific target (ex: `--impersonate chrome_android`) will make CDL use impersonation for all requests, using that tarjet
@@ -120,45 +160,69 @@ network:
 The current default target is `chrome`. The default target can change on any new release without notice, even minor versions
 {% endhint %}
 
-# `ssl_context`
+# `tls`
 
-| Type                    | Default              |
-| ----------------------- | -------------------- |
-| `NonEmptyStr` or `null` | `truststore+certifi` |
+## `verify`
 
-Context that will used to verify SSL connections. Valid values are:
+| Type   | Default |
+| ------ | ------- |
+| `bool` | `True`  |
 
-- `truststore`: Will use certificates already included with the OS
-
-- `certifi`: Will use certificates bundled with the `certifi` version available at the release of the current CDL version
-
-- `truststore+certifi`: Will use certificates already included with the OS, with a fallback to `certifi` for missing certificates
-
-- `null`: Will completely disable SSL verification, allowing insecure connections via `HTTP`.
-
-Setting this to `null` will allow the program to connect to websites without SSL encryption (insecurely).
-
-```yaml
-network:
-  ssl_context: truststore+certifi
-```
+Enable/disable verification of SSL/TLS certificates for HTTP requests
 
 {% hint style="danger" %}
-Sensitive data may be exposed using an insecure connection. For your safety, is recommended to always use a secure HTTPS connection.
+Sensitive data may be exposed using an insecure connection. This option should only be disabled for troubleshooting connection errors.
+
+If you have TLS connection problems with an site but you trust it, it's recommended to load its certificate chain (`.pem`) file
+with the `ca-certs` option
 {% endhint %}
+
+## `ca_certs`
+
+| Type         | Default |
+| ------------ | ------- |
+| `list[Path]` | `[]`    |
+
+A list path to CA bundles to use in PEM format. All paths must exists.
+
+If a path points to a file, it MUST have a `.pem` extension. If a path points to a folder, all `.pem` in it will be loaded (non recursive).
+
+{% hint style="info" %}
+These are **additional** certificates, they will be bundled with the certificates already present in your OS's default CA truststore
+{% endhint %}
+
+{% hint style="info" %}
+`cyberdrop-dl` always include an additional bundle with the root certificates used by Mozilla, from the Common CA Database (<https://www.ccadb.org>).
+This bundle is updated periodically on new versions. For details, see: <https://github.com/jawah/wassima>
+{% endhint %}
+
+## `min_version`
+
+| Type           | Default |
+| -------------- | ------- |
+| `1.2` or `1.3` | `1.2`   |
+
+Mininum TLS version to use. Using `1.3` may help with Cloudflare/DDoS-Guard errors and some fingerprint blocks
+
+```yaml
+tls:
+  ca_certs: []
+  min_version: "1.2"
+  verify: true
+```
 
 # `user_agent`
 
 | Type          | Default                                                                  |
 | ------------- | ------------------------------------------------------------------------ |
-| `NonEmptyStr` | `Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0` |
+| `NonEmptyStr` | `Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0` |
 
 The user agent is the signature of your browser. Some sites use it to identify if the request came from a human or a robot.
 You can google "what is my user agent" to get yours.
 
 ```yaml
 network:
-  user_agent: Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0
+  user_agent: Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0
 ```
 
 {% hint style="info" %}
@@ -172,6 +236,7 @@ These crawlers will ignore custom user-agents and will always use `cyberdrop-dl/
 - Archive.org
 - E621
 - MegaNz
+- Pawchive
 - RealDebrid
 - Transfer.it
 <!-- END_CUSTOM_UA_CRAWLERS -->

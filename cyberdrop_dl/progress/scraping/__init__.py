@@ -4,6 +4,8 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import logging
+import shutil
 import sys
 import time
 from contextvars import ContextVar
@@ -25,7 +27,7 @@ from cyberdrop_dl.utils import enter_context
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
 
-
+logger = logging.getLogger(__name__)
 _PANEL_PADDING: Final = 5
 _STATUS: ContextVar[StatusMessage] = ContextVar("_STATUS")
 
@@ -57,6 +59,20 @@ class ScrapingUI(LiveUI):
 
     def __post_init__(self) -> None:
         self._screen = self._create_screen()
+        self._grow_downloads_panel()
+
+    def _grow_downloads_panel(self) -> None:
+        if is_terminal_in_portrait():
+            return
+
+        terminal_height = shutil.get_terminal_size().lines
+        top_height = self.scrape_errors.max_rows + _PANEL_PADDING
+        scrape_height = self.scrape.max_rows + _PANEL_PADDING
+        status_height = 2
+        available_rows = terminal_height - top_height - scrape_height - status_height - _PANEL_PADDING
+        extra_rows = available_rows - self.downloads.max_rows
+        if extra_rows > 0:
+            self.downloads.max_rows += extra_rows
 
     def __rich__(self) -> RenderableType:
         self._emit_jsonl()
@@ -167,10 +183,15 @@ class ScrapingUI(LiveUI):
             await asyncio.sleep(3)
 
 
-@contextlib.contextmanager
-def show_msg(msg: object) -> Generator[None]:
-    with _STATUS.get()(msg):
-        yield
+def show_msg(msg: str) -> contextlib.AbstractContextManager[None]:
+    logger.info(msg)
+
+    try:
+        status = _STATUS.get()
+    except LookupError:
+        return contextlib.nullcontext()
+
+    return status(msg)
 
 
 if __name__ == "__main__":

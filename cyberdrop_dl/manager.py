@@ -8,17 +8,16 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Self, final
 
-from cyberdrop_dl import ALL_DEPENDENCIES, __version__, aio, env, ffmpeg, stats
+from cyberdrop_dl import __version__, aio, dependencies, env, ffmpeg, stats
 from cyberdrop_dl.cache import cache_context
 from cyberdrop_dl.clients.downloads import DownloadClient
 from cyberdrop_dl.clients.http import HTTPClient
 from cyberdrop_dl.config import Config
 from cyberdrop_dl.config.appdata import AppData
-from cyberdrop_dl.csv_logs import CSVLogsManager
 from cyberdrop_dl.database import Database
 from cyberdrop_dl.dedupe import Czkawka
 from cyberdrop_dl.hasher import Hasher
-from cyberdrop_dl.logs import capture_logs, log_spacer
+from cyberdrop_dl.logs import LoggerAdapter, capture_logs, log_spacer
 from cyberdrop_dl.models.validators import bytesize_to_str
 from cyberdrop_dl.progress import REFRESH_RATE, TUI_DISABLED
 from cyberdrop_dl.signature import simple_repr
@@ -34,7 +33,7 @@ if TYPE_CHECKING:
     from cyberdrop_dl.url_objects import MediaItem
 
 
-logger = logging.getLogger(__name__)
+logger = LoggerAdapter(logging.getLogger(__name__), extra={"cdl_no_truncate": True})
 
 
 @final
@@ -54,24 +53,22 @@ class Manager:
 
         self._completed_downloads: list[MediaItem] = []
         self._hasher: Hasher | None = None
-        self.logs: CSVLogsManager = CSVLogsManager.from_config(self.config)
 
         self.http_client = HTTPClient(self.config)
-        if self.config.network.dump_responses:
-            self.http_client.request_done_callback = self.logs.write_response
 
         self.download_client: DownloadClient = DownloadClient(self)
         self.scrape_mapper: ScrapeMapper
         self.database: Database
         self.deduper: Czkawka
         self.sorter: Sorter
+        self.exit_stack: contextlib.ExitStack = contextlib.ExitStack()
 
     __repr__ = simple_repr("cli_args", "_config", "http_client", "download_client")
 
     @property
     def hasher(self) -> Hasher:
         if self._hasher is None:
-            self._hasher = Hasher.create(self.config, self.database)
+            self._hasher = self.exit_stack.enter_context(Hasher.create(self.config, self.database))
         return self._hasher
 
     @property
@@ -89,8 +86,6 @@ class Manager:
     def __resolve_paths(self) -> None:
         self.appdata.mkdirs()
         self.config.resolve_paths()
-        self.logs = CSVLogsManager.from_config(self.config)
-        self.logs.delete_old_logs()
 
     @contextlib.contextmanager
     def __call__(self) -> Generator[Self]:
@@ -99,6 +94,7 @@ class Manager:
         self.deduper = Czkawka.from_manager(self)
         self.sorter = Sorter.from_config(self.config)
         with (
+            self.exit_stack,
             cache_context(self.appdata.cache_file, self.cache),
             enter_context(REFRESH_RATE, self.config.ui.refresh_rate),
             enter_context(TUI_DISABLED, self.config.ui.mode.is_disabled),
@@ -189,7 +185,7 @@ class Manager:
 def _log_dependencies() -> None:
     if not env.DEBUG_MODE:
         return
-    logger.debug({"dependencies": ALL_DEPENDENCIES})
+    logger.debug({"dependencies": dict(dependencies())})
 
 
 def _log_database(path: Path) -> None:

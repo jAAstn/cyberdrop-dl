@@ -16,19 +16,17 @@ import re
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, final
 
-from bs4 import BeautifulSoup, Tag
-
 from cyberdrop_dl import aio
 from cyberdrop_dl.crawlers.crawler import Crawler
 from cyberdrop_dl.exceptions import LoginError, MaxChildrenError, ScrapeError
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import css, extr_text, is_blob_or_svg
+from cyberdrop_dl.utils import b64_pad, css, extr_text, is_blob_or_svg
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Sequence
 
-    from aiohttp import ClientResponse
+    from bs4 import BeautifulSoup, Tag
 
     from cyberdrop_dl.url_objects import ScrapeItem
 
@@ -427,7 +425,7 @@ class HTMLMessageBoardCrawler(MessageBoardCrawler, is_abc=True):
                     scrape_item.add_children()
         finally:
             if post_url and post_url != thread.url:
-                self.manager.logs.write_last_forum_post(post_url)
+                self.manager.scrape_mapper.logs.write_last_forum_post(post_url)
 
     def _iter_posts(self, thread: ThreadProtocol, soup: BeautifulSoup) -> Generator[ForumPost]:
         for article in soup.select(self.SELECTORS.posts.article):
@@ -444,7 +442,7 @@ class HTMLMessageBoardCrawler(MessageBoardCrawler, is_abc=True):
         scrape_item.append_folders(post_title)
         stats: dict[str, int] = {}
 
-        async with self.new_task_group(scrape_item) as tg:
+        async with self.new_task_group() as tg:
             for scraper in (
                 self._attachments,
                 self._images,
@@ -529,8 +527,7 @@ class HTMLMessageBoardCrawler(MessageBoardCrawler, is_abc=True):
     @error_handling_wrapper
     async def resolve_confirmation_link(self, link: AbsoluteHttpURL) -> AbsoluteHttpURL | None:
         if url := link.query.get("url") or link.query.get("to"):
-            padding = -len(url) % 4
-            url = base64.urlsafe_b64decode(url + "=" * padding).decode("utf-8")
+            url = base64.urlsafe_b64decode(b64_pad(url)).decode("utf-8")
             if url.startswith("https://"):
                 return self.parse_url(url)
 
@@ -613,20 +610,6 @@ def get_thread_page_and_post(
     post_id = find_number(post_name)
     page_number = find_number(page_name) or 1
     return page_number, post_id
-
-
-async def check_is_not_last_page(response: ClientResponse, selectors: MessageBoardSelectors) -> bool:
-    soup = BeautifulSoup(await response.text(), "html.parser")
-    return not is_last_page(soup, selectors)
-
-
-def is_last_page(soup: BeautifulSoup, selectors: MessageBoardSelectors) -> bool:
-    try:
-        last_page = css.select(soup, *selectors.last_page)
-        current_page = css.select(soup, *selectors.current_page)
-    except (AttributeError, IndexError, css.SelectorError):
-        return True
-    return current_page == last_page
 
 
 def get_post_title(soup: BeautifulSoup, selectors: MessageBoardSelectors) -> str:

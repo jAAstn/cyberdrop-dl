@@ -4,19 +4,18 @@ from pathlib import Path
 
 import aiohttp
 import pytest
-from bs4 import BeautifulSoup
 
-from cyberdrop_dl.utils import next_js
+from cyberdrop_dl.utils import css, next_js
 
 TEST_HTML = (Path(__file__).parent / "nextjsv13.html").read_text()
-TEST_SOUP = BeautifulSoup(TEST_HTML, "html.parser")
+TEST_SOUP = css.soup(TEST_HTML)
 
 
 @pytest.fixture(name="next_data", scope="module")
 async def onepace_flight_data() -> next_js.NextJSFlight:
     async with aiohttp.ClientSession() as session:
         resp = await session.get("https://onepace.net/en/watch")
-        soup = BeautifulSoup(await resp.text(), "html.parser")
+        soup = await css.asoup(await resp.text())
         return next_js.extract(soup)
 
 
@@ -55,12 +54,14 @@ def test_parse() -> None:
         assert value != next_js._Magic.ERROR
 
 
+@pytest.mark.xfail(reason="IP blocked in CI")
 def test_next_js_parser(next_data: next_js.NextJSFlight) -> None:
     assert isinstance(next_data, dict)
     assert next_data["1"] == "Sreact.fragment"
     assert len(next_data) > 10
 
 
+@pytest.mark.xfail(reason="IP blocked in CI")
 def test_next_js_find(next_data: next_js.NextJSFlight) -> None:
     episode_keys = "slug", "title", "playlistGroups"
     ep = next_js.find(next_data, *episode_keys)

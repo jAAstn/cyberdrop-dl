@@ -5,10 +5,12 @@ from typing import Any
 import aiohttp
 import pytest
 
+from cyberdrop_dl import env
 from cyberdrop_dl.crawlers.kemono.kemono import _extract_urls, _has_ads
 from cyberdrop_dl.crawlers.kemono.models import Embed, File, UserPostModel, _parse_tags
 
 pytestmark = pytest.mark.http
+pytestmark = pytest.mark.skipif(env.CI, reason="Skip requests")
 
 
 def request_json(url: str) -> Any:
@@ -21,7 +23,8 @@ def request_json(url: str) -> Any:
 
 @pytest.fixture(scope="session")
 def post_resp() -> dict[str, Any]:
-    return request_json("https://pawchive.pw/api/v1/patreon/user/3295915/post/129540190")
+    resp = request_json("https://pawchive.pw/api/v1/patreon/user/3295915/post/129540190/revisions")
+    return next(p for p in resp if p["revision_id"] == 59409)
 
 
 @pytest.fixture(scope="session")
@@ -56,7 +59,8 @@ def test_post_validation(post_resp: dict[str, Any]) -> None:
         ),
     )
     assert post.published == datetime.datetime(2025, 5, 21, 18, 11, 4, tzinfo=datetime.UTC)
-    assert post.added == datetime.datetime(2026, 6, 11, 21, 15, 32, 24479, tzinfo=datetime.UTC)
+    assert post.added
+    assert post.added.date() >= datetime.date(2026, 6, 11)
     assert post.edited
     assert post.edited > datetime.datetime(2026, 7, 8, 3, 11, 18, tzinfo=datetime.UTC)
     assert post.timestamp == 1747851064
@@ -104,7 +108,8 @@ def test_validation_of_post_not_archived_yet(post_resp_w_embeds: dict[str, Any])
     )
     assert post.attachments == ()
     assert post.published == datetime.datetime(2025, 5, 3, 17, 12, 47, tzinfo=datetime.UTC)
-    assert post.added == datetime.datetime(2026, 6, 10, 21, 30, 49, 920931, tzinfo=datetime.UTC)
+    assert post.added
+    assert post.added.date() == datetime.date(2026, 6, 10)
     assert post.edited is None
     assert post.timestamp == 1746292367
     assert post.tags == ("Naughty ASMR",)

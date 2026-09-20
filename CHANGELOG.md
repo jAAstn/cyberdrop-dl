@@ -22,6 +22,254 @@ All notable changes to this project will be documented here. For more details, v
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.10.0] - 2026-09-18
+
+### Added
+
+- New `database prune hashes` command
+- New `--logs.files.dedupe` option
+- New `--update-check` option
+- New `--crawlers.pawchive.expand-posts` and `--crawlers.only-haven.expand-posts` options
+- Origrid support
+- Kick.com support
+- Lulustream support
+- Playmate support
+- Streamfile support
+- Firestream support
+- Recordplay support
+- Support downloads of deferred big files (requires `expand-posts` to be enabled) (Pawchive)
+- Support for reddit videos (`v.redd.it`)
+- Support tags/network/models (Beeg)
+- Support loose images from an user's profile (Goonbox)
+- Support video previews (Pornpics)
+
+### Changed
+
+- Make download rows fill out the available space on the terminal (TUI)
+- Log the original path alongside the deleted duplicate (auto dedupe)
+
+### Fixed
+
+- Downloads failing with `DDoS-Guard` when several links are scraped at once (Yandex Disk)
+- `Key Error` trying to download some posts with videos (BlueSky)
+- Update for v2 redesign (Turbo)
+- All downloads failing (Beeg)
+- Download of unlisted videos (PornHub)
+- Channels and search results (Pornpics)
+
+## [10.9.1] - 2026-09-13
+
+### Changed
+
+- Allow downloads to go outside the current `--download-folder` when using a retry option with `--force-original-path`
+
+### Removed
+
+- OneManager support
+- Motherless support
+- Anontransfer support
+
+### Fixed
+
+- Downloads from users using the new profile layout (xHamster)
+
+## [10.9.0] - 2026-09-13
+
+### Added
+
+- Support premium URLs (direct links)(GoFile)
+- BlueSky support
+- FileditchAlbums support
+- Support for shorts (Rumble)
+
+### Changed
+
+- Enable the `--force-original-path` option on retry commands
+- Ask the user if they want to use the original download path after choosing `retry failed downloads` (main menu)
+- Log a warning when a block comment in the input file is never closed and URLs after it are ignored
+
+### Fixed
+
+- Pagination of some profiles stopping early (Twitter/x.com)
+- Pagination of some profiles never stopping (Twitter/x.com)
+- Some posts missing if a profile has 1k+ tweets (Twitter/x.com)
+- HLS segments not being deleted after a successful download
+- Malformed HLS `.ts` videos in an `.mp4` container
+- Downloads failing with 404 when the file name contains "&" or "'" (Bunkr)
+- Downloads of embeded videos and direct URLs (Imagepond)
+- Thumbnails downloads always failing with 404 (Cyberdrop)
+- Downloads failing with "DDoS-Guard" errors (Yandex Disk)
+- Corrupted file when resuming a partial download that was already 50% or more done
+
+## [10.8.0] - 2026-09-06
+
+### Added
+
+- New `--flaresolverr-wait` option
+- New `--flaresolverr-concurrency` option
+- Support file paths as positional arguments
+- Support multiple files as input
+- Support mixing URLs and input files on the same run (all files must exists and all URLs/files must be positional arguments)
+- Support sub-file/sub-folder URLs (Box.com)
+- Support business URLs (Box.com)
+- Livid.com support
+- Peertube support
+
+### Changed
+
+- The recommended python version is now 3.14
+- Allow multiple concurrent requests with Flaresolverr
+- `--skip-hosts` and `--only-hosts` now perform exact domain matching if an absolute URL is provided.
+  ex: `--skip-hosts https://x.com` will skip `x.com` URLs but not `vix.com` URLs. Using `--skip-hosts x.com` will skip both
+- Hardcoded max rate limit to 3 requests/second (Pawchive)
+- Hardcoded concurrent downloads limit to 5 (Pawchive)
+
+### Deprecated
+
+- Support for `ffmpeg` versions older that v5.1 (2022-07) will be removed on a future release
+
+### Fixed
+
+- Corrupted/mixed up video segments when downloading multiple concurrent HLS streams and `--subfolders.create` is `False`
+- Downloads always failing if `--impersonate` is used (Mega.nz)
+- `403 Forbidden` on all downloads (AdobeLightroom)
+- Parsing of embeded folder URLs (GoogleDrive)
+- `400 Bad request` for albums (PornHub)
+- Single file downloads (OneDrive)
+- URL matching (Anysex)
+- Download of nested folders (Box.com)
+
+## [10.7.0] - 2026-08-29
+
+### Added
+
+- New `--downloads.back-pressure` option
+- New `--restrict-path` option
+- New `--input-folder` option that scans all `.txt` within a folder for URLs (non recursive). URLs within the same file will create a group. The name of the group is the filename;
+  Each group will be downloaded to their own subfolder within the downloads folder. See: <https://script-ware.gitbook.io/cyberdrop-dl/reference/config/sorting#group-urls>
+- New `--input` option that accepts either a file or a folder
+- Clonr.co support
+
+### Changed
+
+- `-i` is now an alias for `--input` instead of `--input-file`
+- Increase limit of concurrent scrapes from the same site, from 20 to 40
+- Use multiple concurrent connections to the database for faster reads (up to 10)
+- Database will now operate in WAL mode, which may create additional temp files next to the database file (`.db-shm` and `.db-wal` files)
+- Download previews of video assets (Patreon)
+
+### Fixed
+
+- Clips downloads (Twitch)
+- Single post downloads (Patreon)
+- Download of image assets with no name (Patreon)
+
+## [10.6.1] - 2026-08-25
+
+### Changed
+
+- Hashing files no longer blocks the download queue. When a download reaches 100%, a slot is immediately available while hashes are computed in the background (if enabled)
+- Restore hardcoded limit of 1 concurrent download per server (Bunkr)
+
+### Fixed
+
+- All downloads freezing if too many files were currently hashing
+
+## [10.6.0] - 2026-08-24
+
+### Added
+
+- New `--logs.http-traffic` option
+- New `--filename-regex-exclude` option
+- New `--flaresolverr-use-session` option
+- Support direct local connection to JDownloader using their deprecated API
+- `wreq` as optional HTTP backend for browser impersonation (via the `wreq` extra)
+- Webmshare support
+- Support for revisions (Pawchive)
+
+### Changed
+
+- Log HTTP requests made to JDownloader
+- Logs of HTTP requests/responses will be emitted at INFO instead of DEBUG level
+- If scraping has already started, sending `SIGINT` (`Ctrl + C`) to the process will stop all scraping and downloads but will continue with post-runtime actions
+  (sorting, hashing, send notifications, etc..). Press `Ctrl + C` again to force quit
+- Reduced the maximum size the log file can have to be sent as attachment in notifications, from 25 MB to 20 MB.
+- Retry downloads (from 0%) on transient network errors (Mega.nz)
+
+### Fixed
+
+- All scrapes failing if running with `--dump-responses`
+- Handle malformed JSON responses wrapped in HTML (Flaresolverr)
+- CLI additive args being ignored
+- `PermissionError` running `database transfer`
+- Incorrent warning about login cookies (vBulletin)
+- Handle new signed download URLs (Fileditch)
+- Handle new URL format (Whyp.it)
+- `416 - Precondition failed` on all downloads (PornHub)
+
+## [10.5.0] - 2026-08-15
+
+### Added
+
+- Support defining config settings across 2 different files.
+  A second config file can be created at the same location as the current `--config-file` with the suffix (`.override`):
+  ex: `/.config/cyberdrop-dl/config.yaml`, `/.config/cyberdrop-dl/config.override.yaml`.
+
+### Fixed
+
+- Update website salt (Gofile)
+
+## [10.4.0] - 2026-08-14
+
+### Added
+
+- New `--ignore-hashes` option
+- New `--thumbnails` option
+- New `--tls.min-version` option
+- New `--ca-certs` option
+- New `--verify` option
+- New `database dir` command
+- New `config dir` command
+- New `cache dir` command
+- New generic `video` crawler to map any unsupported site as a video site
+- Support for HLS streams with encrypted segments (AES-128)
+- Support setting a custom referer for some sites by setting the `referer` query param to the referer URL
+- Vidstack support
+- Pluto.tv support
+- Nova.storage support
+- OnlyHaven support
+- Odysee support
+- Hohoj support
+- Mitaku support
+- Octave Music support
+- Redtube support
+- Livecamrips support
+- xpornium support
+- Gifhq support
+- Fyptt support
+- Short URLs support (Filedicth)
+- Users support (Goonbox)
+- Hashtags support (TWPornstars)
+
+### Changed
+
+- Try to download M3U8 URLs from unsupported sites
+- Always use the CA certificates from the system trust store + CA bundle from Mozilla
+- Skip all files with pending imports (Pawchive)
+- The full URL of successful downloads from unsupported sites (`no_crawler`) will be saved as is to the database. Existing database entries are invalid
+- Always include content id in folder name if its name is `root` (GoFile)
+- Do not start a download if there no enough free space to finish it up to 100%
+
+### Deprecated
+
+- `--ssl-context` is deprecated and will be removed in a future version
+
+### Fixed
+
+- Parsing of unquoted `$EDITOR` var
+- Campaign id extraction (Patreon)
+- Update to new API for single files (GoFile)
+
 ## [10.3.0] - 2026-07-28
 
 ### Added

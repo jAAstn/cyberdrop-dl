@@ -1,11 +1,33 @@
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, override
 
 from pydantic import Field
-from pydantic.functional_validators import AfterValidator
+from pydantic.functional_validators import AfterValidator, field_validator
 
 from cyberdrop_dl.models import ConfigGroup, ConfigModel
-from cyberdrop_dl.models.types import HttpURL, NonEmptyStr
-from cyberdrop_dl.models.validators import remove_duplicates
+from cyberdrop_dl.models.types import FormatStr, HttpURL, NonEmptyStr
+from cyberdrop_dl.models.validators import remove_duplicates, strings
+
+
+class GoogleDriveFormats(ConfigModel):
+    docs: Literal["docx", "odt", "rtf", "txt", "epub", "pdf", "md", "zip"] = "docx"
+    "Default format for documents (can be overridden per URL with the 'format' query param)"
+
+    sheets: Literal["xslx", "ods", "html", "csv", "tsv"] = "xslx"
+    "Default format for spreedsheets (can be overridden per URL with the 'format' query param)"
+
+    slides: Literal["pptx", "odp"] = "pptx"
+    "Default format for presentations (can be overridden per URL with the 'format' query param)"
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _remove_dots(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.lstrip(".")
+        return value
+
+
+class GoogleDriveConfig(ConfigModel):
+    default_formats: GoogleDriveFormats = Field(default_factory=GoogleDriveFormats)
 
 
 class KemonoConfig(ConfigModel):
@@ -16,7 +38,10 @@ class KemonoConfig(ConfigModel):
     "Download all attachments in a post (may or may not include `file`)"
 
     content_urls: bool = True
-    "Download any URL found inside the description (text) of a post (slower)"
+    "Download any URL found inside the description (text) of a post"
+
+    expand_posts: bool = False
+    "Make an additional API request for each post to get original filenames and the content/text (slower)"
 
     embed: bool = True
     "Download the embedded file from third party sites (if any)(mega.nz, pcloud, dropbox, etc..)"
@@ -37,7 +62,7 @@ class TwitterArticlesConfig(ConfigModel):
 
 class TwitterConfig(ConfigModel):
     cards: bool = True
-    "Parse and download cards in a post (embeds from thirdparty sites)"
+    "Parse and download cards in a post (embeds from third-party sites)"
 
     threads: bool = True
     "Downloads all posts in a thread (All direct replies from OP to their own tweet)"
@@ -54,6 +79,45 @@ class TwitterConfig(ConfigModel):
     image_size: Literal["orig", "4096x4096", "large", "medium", "small", "thumb"] = "orig"
     # `orig`` is original quality but it's not always available, same as "4096x4096"
     # "large", "medium", or "small" are always available
+
+
+class BlueSkyConfig(ConfigModel):
+    external: bool = True
+    "Parse and download embeds from third-party sites"
+
+    threads: bool = True
+    "Downloads all posts in a thread (All direct replies from OP to their own post)"
+
+    content_urls: bool = True
+    "Parse and try to download any URL found inside the text of a post"
+
+    reposts: bool = False
+    "Download media from reposts in the user's timeline"
+
+
+class OctaveMusicConfig(ConfigModel):
+    quality: Literal["lossless", "mp3-320"] = "mp3-320"
+    "Quality of audio file to download (lossless are .flac files)"
+
+    filename_format: Annotated[
+        FormatStr,
+        strings.format_validator(
+            {
+                "artist",
+                "artists",
+                "writer",
+                "writers",
+                "composer",
+                "composers",
+                "release_date",
+                "title",
+                "ext",
+                "track_number",
+                "disk_number",
+            }
+        ),
+    ] = "{artist} - {title}{ext}"
+    "Format to generate audio file"
 
 
 class BandcampConfig(ConfigModel):
@@ -83,12 +147,38 @@ class OnePaceConfig(ConfigModel):
     """Download episodes with english audio tracks instead of japanese (if available)"""
 
 
+class ClonrConfig(ConfigModel):
+    use_source: bool = False
+    "Ignore files in clone and process the original Mega.nz URL"
+
+    zip: bool = False
+    "Download entire clone as a single ZIP file"
+
+    @override
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
+        if self.use_source and self.zip:
+            raise ValueError("'clonr.zip' and 'clonr.use_source' are mutually exclusive")
+
+
+class PornHubConfig(ConfigModel):
+    profile_paths: tuple[NonEmptyStr, ...] = "photos/public", "gifs/public", "videos", "videos/upload"
+    "Subpaths to scrape when an input URL is a profile's homepage"
+
+    @override
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
+        self.profile_paths = tuple(p.lstrip("/") for p in self.profile_paths)
+
+
 class GenericCrawlers(ConfigModel):
     wordpress_media: tuple[HttpURL, ...] = ()
     wordpress_html: tuple[HttpURL, ...] = ()
     discourse: tuple[HttpURL, ...] = ()
     chevereto: tuple[HttpURL, ...] = ()
     kvs: tuple[HttpURL, ...] = ()
+    video: tuple[HttpURL, ...] = ()
+    peertube: tuple[HttpURL, ...] = ()
 
 
 class Crawlers(ConfigGroup, name=None):
@@ -96,9 +186,15 @@ class Crawlers(ConfigGroup, name=None):
     "Name of crawlers to disable for the current run"
 
     bandcamp: BandcampConfig = Field(default_factory=BandcampConfig)
+    bluesky: BlueSkyConfig = Field(default_factory=BlueSkyConfig)
+    clonr: ClonrConfig = Field(default_factory=ClonrConfig)
     clypit: ClypitConfig = Field(default_factory=ClypitConfig)
     generic: GenericCrawlers = Field(default_factory=GenericCrawlers)
+    google_drive: GoogleDriveConfig = Field(default_factory=GoogleDriveConfig)
+    octave_music: OctaveMusicConfig = Field(default_factory=OctaveMusicConfig)
     one_pace: OnePaceConfig = Field(default_factory=OnePaceConfig)
+    only_haven: KemonoConfig = Field(default_factory=KemonoConfig)
+    pawchive: KemonoConfig = Field(default_factory=KemonoConfig)
+    pornhub: PornHubConfig = Field(default_factory=PornHubConfig)
     tiktok: TikTokConfig = Field(default_factory=TikTokConfig)
     twitter: TwitterConfig = Field(default_factory=TwitterConfig)
-    pawchive: KemonoConfig = Field(default_factory=KemonoConfig)

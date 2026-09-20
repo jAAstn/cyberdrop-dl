@@ -58,9 +58,9 @@ class DailyMotionCrawler(Crawler):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case ["video", video_id]:
-                return await self.video(scrape_item, video_id)
+                await self.video(scrape_item, video_id)
             case ["playlist", slug]:
-                return await self.playlist(scrape_item, slug)
+                await self.playlist(scrape_item, slug)
             case _:
                 raise ValueError
 
@@ -93,7 +93,7 @@ class DailyMotionCrawler(Crawler):
         async for videos in self.api.playlist_videos(playlist.id):
             for video_url in videos:
                 new_item = scrape_item.create_child(video_url)
-                self.create_task(self.run(new_item))
+                self.create_task(self.run(new_item, check_referer=True))
                 scrape_item.add_children()
 
 

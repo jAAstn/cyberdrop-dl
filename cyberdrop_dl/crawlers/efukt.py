@@ -47,19 +47,20 @@ class EfuktCrawler(Crawler):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case ["pics", _]:
-                return await self.media(scrape_item)
+                await self.media(scrape_item)
             case ["view.gif.php"] if scrape_item.url.query.get("id"):
-                return await self.media(scrape_item)
+                await self.media(scrape_item)
             case ["series", _]:
-                return await self.series(scrape_item)
+                await self.series(scrape_item)
             case [slug]:
                 if slug.isdigit():
-                    return await self.homepage(scrape_item)
-                if slug.endswith(".html"):
-                    return await self.media(scrape_item)
-                raise ValueError
+                    await self.homepage(scrape_item)
+                elif slug.endswith(".html"):
+                    await self.media(scrape_item)
+                else:
+                    raise ValueError
             case []:
-                return await self.homepage(scrape_item)
+                await self.homepage(scrape_item)
             case _:
                 raise ValueError
 
@@ -67,7 +68,7 @@ class EfuktCrawler(Crawler):
     async def homepage(self, scrape_item: ScrapeItem) -> None:
         async for soup in self.web_pager(scrape_item.url):
             for new_scrape_item in self.iter_children(scrape_item, soup, Selector.VIDEO_THUMBS):
-                self.create_task(self.run(new_scrape_item))
+                self.create_task(self.run(new_scrape_item, check_referer=True))
 
     @error_handling_wrapper
     async def series(self, scrape_item: ScrapeItem) -> None:
@@ -77,7 +78,7 @@ class EfuktCrawler(Crawler):
 
         async for soup in pages:
             for new_scrape_item in self.iter_children(scrape_item, soup, Selector.VIDEO_THUMBS):
-                self.create_task(self.run(new_scrape_item))
+                self.create_task(self.run(new_scrape_item, check_referer=True))
 
     @error_handling_wrapper
     async def media(self, scrape_item: ScrapeItem) -> None:

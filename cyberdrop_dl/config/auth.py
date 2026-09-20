@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import logging
 from typing import TYPE_CHECKING, Any, override
 
@@ -14,7 +13,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
-_HAS_APPRISE = importlib.util.find_spec("apprise") is not None
 
 
 def _censor(value: object) -> object:
@@ -49,17 +47,24 @@ class EmailAuth(CensoredModel):
 
 
 class JDownloaderAuth(CensoredModel):
-    username: str | None = None
+    email: str | None = Field(validation_alias="username", default=None)
     password: str | None = None
-    device: str | None = None
+    device_name: str | None = Field(validation_alias="device", default=None)
 
 
 class Notifications(CensoredModel):
     apprise: tuple[AppriseURL, ...] = ()
     webhook: FalsyAsNone[AppriseURL] = None
 
-    def model_post_init(self, *_) -> None:
-        if self.apprise and not _HAS_APPRISE:
+    @override
+    def model_post_init(self, context: Any, /) -> None:
+        super().model_post_init(context)
+        if not self.apprise:
+            return
+
+        import importlib.util
+
+        if not importlib.util.find_spec("apprise"):
             logger.warning("Found apprise URLs for notifications but apprise is not installed. Ignoring")
             self.apprise = ()
 
@@ -70,6 +75,7 @@ class Authentication(ConfigModel):
     jdownloader: JDownloaderAuth = Field(default_factory=JDownloaderAuth)
     mega_nz: EmailAuth = Field(default_factory=EmailAuth)
     pixeldrain: ApiKeyAuth = Field(default_factory=ApiKeyAuth)
+    nova: ApiKeyAuth = Field(default_factory=ApiKeyAuth)
     real_debrid: ApiKeyAuth = Field(default_factory=ApiKeyAuth)
 
     def censored_dump(self) -> dict[str, bool]:

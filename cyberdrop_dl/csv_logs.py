@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING, Any, Self
 from cyberdrop_dl import constants
 from cyberdrop_dl.filepath import sanitize_filename
 from cyberdrop_dl.utils import json
+from cyberdrop_dl.utils.dataclass import DictDataclass
 
 if TYPE_CHECKING:
     import datetime
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable
 
     import yarl
 
@@ -28,22 +29,34 @@ logger = logging.getLogger(__name__)
 _CSV_DELIMITER = ","
 
 
-@dataclasses.dataclass(slots=True, kw_only=True)
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True)
 class CSVFiles:
     unsupported_urls: Path
     download_errors: Path
     scrape_errors: Path
     last_forum_post: Path
+    dedupe: Path
     jsonl_file: Path
 
-    def __iter__(self) -> Iterator[Path]:
-        return iter(dataclasses.astuple(self))
+    __iter__ = DictDataclass.__iter__
+
+    @classmethod
+    def from_config(cls, config: Config) -> Self:
+        files = config.logs.files
+        return cls(
+            unsupported_urls=files.unsupported,
+            download_errors=files.download_errors,
+            scrape_errors=files.scrape_errors,
+            jsonl_file=files.jsonl_file,
+            last_forum_post=files.last_forum_post,
+            dedupe=files.dedupe,
+        )
 
 
 @dataclasses.dataclass(slots=True)
 class CSVLogsManager:
     files: CSVFiles
-    task_group: asyncio.TaskGroup = dataclasses.field(init=False, default_factory=asyncio.TaskGroup)
+    task_group: asyncio.TaskGroup
     _file_locks: dict[Path, asyncio.Lock] = dataclasses.field(
         init=False, default_factory=lambda: defaultdict(asyncio.Lock)
     )
@@ -55,28 +68,21 @@ class CSVLogsManager:
         self._responses_folder = self.files.jsonl_file.parent / "cdl_responses"
 
     @classmethod
-    def from_config(cls, config: Config) -> Self:
-        files = config.logs.files
-        return cls(
-            CSVFiles(
-                unsupported_urls=files.unsupported,
-                download_errors=files.download_errors,
-                scrape_errors=files.scrape_errors,
-                jsonl_file=files.jsonl_file,
-                last_forum_post=files.last_forum_post,
-            )
-        )
+    def from_config(cls, config: Config, task_group: asyncio.TaskGroup) -> Self:
+        return cls(CSVFiles.from_config(config), task_group)
 
     def delete_old_logs(self) -> None:
         if self._ready:
             return
-        for path in self.files:
+
+        path: Path
+        for name, path in self.files:
             try:
                 path.unlink()
             except FileNotFoundError:
                 pass
             else:
-                logger.warning(f"Deleted conflicting old log file: '{path}'")
+                logger.warning("Deleted conflicting old %s log file: '%s'", name, path)
 
         self._ready = True
 
@@ -96,6 +102,11 @@ class CSVLogsManager:
 
     def write_last_forum_post(self, url: AbsoluteHttpURL) -> None:
         _ = self.task_group.create_task(self._write_to_csv(self.files.last_forum_post, url=url))
+
+    def write_dedupe(self, duplicate: Path, original: Path, file_hash: str) -> None:
+        _ = self.task_group.create_task(
+            self._write_to_csv(self.files.dedupe, duplicate=duplicate, original=original, hash=file_hash)
+        )
 
     def write_download_error(
         self,
@@ -154,6 +165,7 @@ def _write_resp_to_disk(
 ) -> None:
     ext = ".json" if "json" in response.content_type else ".html"
     file = _prepare_resp_file(folder, url, response.created_at, ext)
+    file.parent.mkdir(exist_ok=True)
     try:
         _ = file.write_text(response.create_report(exc), "utf8")
     except OSError as e:

@@ -9,7 +9,7 @@ However, links from the site will still be processed by Real-Debrid (if enabled)
 
 The list should be valid crawlers names. The name of the crawler is the name of the primary site they support. ex: `4Chan`, `Mega.nz`, `Dropbox`
 
-You can get the crawler' name from the [supported sites page](https://script-ware.gitbook.io/cyberdrop-dl/reference/supported-websites#supported-sites)
+You can get the crawler's name from the [supported sites page](https://script-ware.gitbook.io/cyberdrop-dl/reference/supported-websites#supported-sites)
 The name of the crawer is the title of their section in the page (in bold).
 
 ```yaml
@@ -99,7 +99,56 @@ crawlers:
       - alas
 ```
 
+# bluesky
+
+```yaml
+crawlers:
+  bluesky:
+    content_urls: true
+    external: true
+    reposts: false
+    threads: true
+```
+
+## `external`
+
+| Type   | Default |
+| ------ | ------- |
+| `Bool` | `true`  |
+
+Parse and download embeds from third-party sites
+
+## `content_urls`
+
+| Type   | Default |
+| ------ | ------- |
+| `Bool` | `true`  |
+
+Parse and try to download any URL found inside the text of a post.
+
+## `threads`
+
+| Type   | Default |
+| ------ | ------- |
+| `Bool` | `true`  |
+
+Downloads all posts in a thread (All direct replies from OP to their own post)
+
+## `reposts`
+
+| Type   | Default |
+| ------ | ------- |
+| `Bool` | `false` |
+
+Download media from reposts in the user's timeline
+
 # Clyp.it
+
+```yaml
+crawlers:
+  clypit:
+    prefer_mp3: false
+```
 
 ## `prefer_mp3`
 
@@ -108,6 +157,43 @@ crawlers:
 | `Bool` | `false` |
 
 Download audios as `.mp3` files even if WAV (high quality) versions are available
+
+# Google Drive
+
+```yaml
+crawlers:
+  google_drive:
+    default_formats:
+      docs: docx
+      sheets: xslx
+      slides: pptx
+```
+
+## `default_formats`
+
+### `docs`
+
+| Type                                                      | Default |
+| --------------------------------------------------------- | ------- |
+| `docx`, `odt`, `rtf`, `txt`, `epub`, `pdf`, `md` or `zip` | `docx`  |
+
+Default format for documents (can be overridden per URL with the 'format' query param)
+
+### `sheets`
+
+| Type                                  | Default |
+| ------------------------------------- | ------- |
+| `xslx`, `ods`, `html`, `csv` or `tsv` | `xslx`  |
+
+Default format for spreedsheets (can be overridden per URL with the 'format' query param)
+
+### `slides`
+
+| Type            | Default |
+| --------------- | ------- |
+| `pptx` or `odp` | `pptx`  |
+
+Default format for presentations (can be overridden per URL with the 'format' query param)
 
 # OnePace
 
@@ -119,7 +205,7 @@ Download audios as `.mp3` files even if WAV (high quality) versions are availabl
 
 Download episodes with english audio tracks instead of japanese (if available)
 
-# Pawchive
+# Pawchive / OnlyHaven
 
 ## `file`
 
@@ -146,8 +232,20 @@ Download all attachments in a post (may or may not include `file`)
 Scan the description (text) in a post and download any URL found
 
 {% hint style="warning" %}
-This option slows down scraping significally. The default response from a search query does not return the content of each post.
-`cyberdrop-dl` needs to make an additional request for each post to get its content (50x requests in total).
+This option slows down scraping significally (50x requests in total)
+{% endhint %}
+
+## `expand_posts`
+
+| Type   | Default |
+| ------ | ------- |
+| `Bool` | `false` |
+
+When crawling profiles/favorites/searchs results, make an additional request per post to get the original filenames of files and the content/text in the post.
+To download deferred big files, this option must be enabled
+
+{% hint style="warning" %}
+This option slows down scraping significally (100x requests in total)
 {% endhint %}
 
 ## `embed`
@@ -170,6 +268,26 @@ crawlers:
     embed: true
     file: true
 ```
+
+# PornHub
+
+```yaml
+crawlers:
+  pornhub:
+    profile_paths:
+      - "photos/public"
+      - "gifs/public"
+      - "videos"
+      - "videos/upload"
+```
+
+## `profile_paths`
+
+| Type                  | Default                                                     |
+| --------------------- | ----------------------------------------------------------- |
+| list of `NonEmptyStr` | [`photos/public`, `gifs/public`, `videos`, `videos/upload`] |
+
+Subpaths to scrape when an input URL is a profile's homepage. ex: `https://www.pornhub.com/model/<model_name>`
 
 # Tiktok
 

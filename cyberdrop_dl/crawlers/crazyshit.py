@@ -25,9 +25,9 @@ class CrazyShitCrawler(Crawler):
         match scrape_item.url.parts[1:]:
             case ["cnt", "medias", slug]:
                 video_id = str(int(slug.partition("-")[0]))
-                return await self.video(scrape_item, video_id)
+                await self.video(scrape_item, video_id)
             case ["series", _]:
-                return await self.series(scrape_item)
+                await self.series(scrape_item)
             case _:
                 raise ValueError
 
@@ -46,5 +46,5 @@ class CrazyShitCrawler(Crawler):
         scrape_item.setup_as_album(self.create_title(title))
         sleep = aio.periodic_sleep(10)
         for new_item in self.iter_children(scrape_item, soup, ".row.tiles a.thumb"):
-            self.create_eager_task(self.run(new_item))
+            self.create_eager_task(self.run(new_item, check_referer=True))
             await sleep()

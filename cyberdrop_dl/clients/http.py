@@ -3,25 +3,21 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
-import logging
+import http.cookies
 import time
-import warnings
 from contextvars import ContextVar
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, Unpack, final, override
 
 import aiohttp
 from aiohttp import hdrs
-from curl_cffi.aio import AsyncCurl
-from curl_cffi.requests import AsyncSession
-from curl_cffi.utils import CurlCffiWarning
 
-from cyberdrop_dl import aio, cookies, ddos_guard
-from cyberdrop_dl.clients import flaresolverr, tcp
+from cyberdrop_dl import aio, cookies, ddos_guard, env
+from cyberdrop_dl.clients import curl_cffi, flaresolverr, get_logger, tcp, wreq
 from cyberdrop_dl.clients.request import Request, RequestParams
-from cyberdrop_dl.clients.response import AbstractResponse
+from cyberdrop_dl.clients.response import AbstractResponse, FlareSolverrResponse
 from cyberdrop_dl.cookies import make_simple_cookie
-from cyberdrop_dl.exceptions import DDOSGuardError, DownloadError
+from cyberdrop_dl.exceptions import DDOSGuardError, DownloadError, ScrapeError
 from cyberdrop_dl.signature import simple_repr
 from cyberdrop_dl.utils import enter_context, truncated_preview
 from cyberdrop_dl.utils.dataclass import ConfigDataclass, frozen
@@ -31,11 +27,14 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bs4 import BeautifulSoup
+    from curl_cffi.requests import AsyncSession
     from curl_cffi.requests.models import Response as CurlResponse
-    from curl_cffi.requests.session import HttpMethod
 
+    from cyberdrop_dl.clients.wreq import WreqClient  # pyright: ignore[reportPrivateLocalImportUsage]
     from cyberdrop_dl.config import Config
     from cyberdrop_dl.url_objects import AbsoluteHttpURL
+
+    from . import HttpMethod
 
 
 type RequestContext = contextlib.AbstractAsyncContextManager[AbstractResponse[Any]]
@@ -44,22 +43,24 @@ type JSONCheck = Callable[[Any, AbstractResponse[Any]], None]
 
 JSON_CHECK: ContextVar[JSONCheck | None] = ContextVar("JSON_CHECK", default=None)
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class _LazyResponseLog:
-    def __init__(self, response: AbstractResponse[Any]) -> None:
+    def __init__(self, response: AbstractResponse[Any], *, content_only: bool = False) -> None:
         self.resp: AbstractResponse[Any] = response
+        self.content_only: bool = content_only
 
     def __json__(self) -> dict[str, Any]:
         resp = self.resp.__json__()
-        del resp["created_at"]
         if type(resp["content"]) is str:
-            resp["content"] = truncated_preview(resp["content"])
-        return resp
+            resp["content"] = truncated_preview(resp["content"], env.MAX_LOG_MSG_LENGTH if self.content_only else 100)
 
-    def content(self) -> dict[str, Any]:
-        return {"content": self.__json__()["content"]}
+        if self.content_only:
+            return {"content": resp["content"]}
+
+        del resp["created_at"]
+        return resp
 
     def __str__(self) -> str:
         return str(self.__json__())
@@ -95,20 +96,50 @@ class HTTPClient:
             asyncio.Semaphore(config.downloads.concurrency),
         )
 
-        self._ssl_context = tcp.create_ssl_context(config.network.ssl_context)
+        self._ssl_context = None
         self._cookies: aiohttp.CookieJar | None = None
         self._flaresolverr: flaresolverr.Client | None = None
         self._curl_session: AsyncSession[CurlResponse] | None = None
+        self._use_flaresolverr_ua: set[str] = set()
+        self._flaresolverr_ua: str = ""
+        self._wreq_session: WreqClient | None = None
         self._session: aiohttp.ClientSession
         self._download_session: aiohttp.ClientSession
 
-    __repr__ = simple_repr("config", "_ssl_context", "_cookies", "_flaresolverr", "limiter", "request_done_callback")
+    __repr__ = simple_repr(
+        "config",
+        "_ssl_context",
+        "_cookies",
+        "_flaresolverr",
+        "limiter",
+        "request_done_callback",
+        "_use_flaresolverr_ua",
+    )
+
+    @property
+    def ssl_context(self):
+        if self._ssl_context is None:
+            self._ssl_context = self.config.network.tls.verify and tcp.create_ssl_context(
+                tcp.resolve_tls_version(self.config.network.tls.min_version),
+                self.config.network.tls.ca_certs,
+            )
+        return self._ssl_context
 
     @property
     def curl_session(self) -> AsyncSession[CurlResponse]:
         if self._curl_session is None:
             self._curl_session = self._create_curl_session()
         return self._curl_session
+
+    @property
+    def wreq_session(self) -> WreqClient:
+        if self._wreq_session is None:
+            self._wreq_session = wreq.create_client(self.config)
+            jar = self._wreq_session.cookie_jar
+            assert jar is not None
+            for (domain, path), cookie in self.cookies.cookies.items():
+                jar.add(cookie.output(), f"https://{domain}{path}")
+        return self._wreq_session
 
     @property
     def cookies(self) -> aiohttp.CookieJar:
@@ -120,9 +151,17 @@ class HTTPClient:
     @property
     def flaresolverr(self) -> flaresolverr.Client | None:
         if self._flaresolverr is None and (url := self.config.network.flaresolverr):
-            self._flaresolverr = flaresolverr.Client(url, self._session)
-        if self._flaresolverr and self._flaresolverr.is_down:
-            return None
+            net = self.config.network
+            self._flaresolverr = flaresolverr.Client(
+                self._session,
+                flaresolverr.Config(
+                    url=url.origin() / "v1",
+                    use_session=net.flaresolverr_use_session,
+                    concurrency=net.flaresolverr_concurrency,
+                    wait=net.flaresolverr_wait,
+                    proxy=net.proxy,
+                ),
+            )
         return self._flaresolverr
 
     def __sync_session_cookies(self, url: AbsoluteHttpURL) -> None:
@@ -138,6 +177,17 @@ class HTTPClient:
             simple_cookie = make_simple_cookie(cookie, now)
             self.cookies.update_cookies(simple_cookie, url)
 
+    def __sync_wreq_cookies(self, url: AbsoluteHttpURL) -> None:
+        now = time.time()
+        jar = self.wreq_session.cookie_jar
+        assert jar is not None
+        for cookie in jar.get_all():
+            try:
+                simple_cookie = wreq.make_simple_cookie(cookie, now)
+            except (http.cookies.CookieError, ValueError):
+                continue
+            self.cookies.update_cookies(simple_cookie, url)
+
     async def __aenter__(self) -> Self:
         await tcp.choose_dns_resolver()
         self._session = self.create_aiohttp_session()
@@ -150,13 +200,16 @@ class HTTPClient:
             if self._curl_session is not None:
                 tg.create_task(self._curl_session.close())
 
+            if self._wreq_session is not None:
+                self._wreq_session.close()
+
             if self._flaresolverr is not None:
                 # close before closing aiohttp session
                 await self._flaresolverr.aclose()
             await self._session.close()
 
     def _create_curl_session(self) -> AsyncSession[CurlResponse]:
-        session = _create_curl_session(self.config)
+        session = curl_cffi.create_session(self.config)
         session.cookies = {cookie.key: cookie.value for cookie in self.cookies}
         return session
 
@@ -171,7 +224,7 @@ class HTTPClient:
                 sock_read=self.config.network.read_timeout,
             ),
             proxy=self.config.network.proxy,
-            connector=tcp.create_connector(self._ssl_context),
+            connector=tcp.create_connector(self.ssl_context),
             requote_redirect_url=False,
         )
 
@@ -196,11 +249,33 @@ class HTTPClient:
                 await check_http_status(resp)
             except DDOSGuardError:
                 await resp.aclose()
-                if not self.flaresolverr:
+                flare = self.flaresolverr
+                if not flare or flare.is_down:
                     raise
-                yield await self._flaresolverr_request(url, kwargs.get("data"))
             else:
                 yield resp
+                return
+
+        # TODO: implement per host weak locks to only make one flaresolverr request
+        # Use the cookies from that request for all future ones
+        resp = await self._flaresolverr_request(url, method=method, data=kwargs.get("data"))
+        custom_headers = tuple(
+            sorted(map(str, set(kwargs.get("headers", ())) - {hdrs.USER_AGENT, hdrs.REFERER, hdrs.ORIGIN}))
+        )
+        has_json = kwargs.get("json") is not None
+        if not (has_json or custom_headers):
+            yield resp
+            return
+
+        logger.info(
+            "Making %s request to %s again with Flaresolverr cookies. Reasons: %s",
+            method,
+            url,
+            f"{has_json = }, {custom_headers = }",
+        )
+        async with self.raw_request(url, method, **kwargs) as resp:
+            await check_http_status(resp)
+            yield resp
 
     def raw_request(
         self,
@@ -210,10 +285,16 @@ class HTTPClient:
         **kwargs: Unpack[RequestParams],
     ) -> RequestContext:
         request = Request.from_params(url, method, kwargs)
-        if self.config.network.impersonate:
+        if self.config.network.impersonate and request.impersonate is not False:
             request.impersonate = self.config.network.impersonate
 
-        if request.impersonate:
+        if url.host in self._use_flaresolverr_ua:
+            # We already made a (successful) flaresolverr request to this host
+            # Use the same UA as flaresolverr to make sure cookies are valid
+            request.impersonate = False
+            request.headers[hdrs.USER_AGENT] = self._flaresolverr_ua
+
+        elif request.impersonate:
             request.headers.pop(hdrs.USER_AGENT, None)
         else:
             request.headers.setdefault(hdrs.USER_AGENT, self.config.network.user_agent)
@@ -222,11 +303,11 @@ class HTTPClient:
 
     @contextlib.asynccontextmanager
     async def _request(self, request: Request) -> AsyncGenerator[AbstractResponse[Any]]:
-        logger.debug("Starting %s request [id=%s]\n%s", request.method, request.id, request)
+        logger.traffic("Starting %s request [id=%s]\n%s", request.method, request.id, request)
         exc = None
         async with self.__request(request) as resp:
             resp.id = request.id
-            logger.debug("Finished %s request [id=%s]\n%s", request.method, request.id, _LazyResponseLog(resp))
+            logger.traffic("Finished %s request [id=%s]\n%s", request.method, request.id, _LazyResponseLog(resp))
             try:
                 yield resp
             except Exception as e:
@@ -234,11 +315,11 @@ class HTTPClient:
                 raise
             finally:
                 if resp.has_content_not_logged:
-                    logger.debug(
+                    logger.traffic(
                         "Content from %s request [id=%s]\n%s",
                         request.method,
                         request.id,
-                        _LazyResponseLog(resp).content(),
+                        _LazyResponseLog(resp, content_only=True),
                     )
                 if self.request_done_callback:
                     self.request_done_callback(request.url, resp, exc)
@@ -248,6 +329,22 @@ class HTTPClient:
     @contextlib.asynccontextmanager
     async def __request(self, request: Request) -> AsyncGenerator[AbstractResponse[Any]]:
         if request.impersonate:
+            if wreq.IS_INSTALLED:
+                resp = await self.wreq_session.request(
+                    wreq.cast_method(request.method),
+                    str(request.url),
+                    headers=dict(request.headers),
+                    json=request.json,
+                    body=request.data,
+                    emulation=wreq.cast_impersonate(request.impersonate),  # pyright: ignore[reportArgumentType]
+                    **request.params,
+                )
+                async with resp:
+                    resp = AbstractResponse.create(resp)
+                    self.__sync_wreq_cookies(resp.url)
+                    yield resp
+                    return
+
             async with contextlib.aclosing(
                 await self.curl_session.request(
                     request.method,
@@ -256,12 +353,12 @@ class HTTPClient:
                     headers=request.headers,
                     json=request.json,
                     data=request.data,
-                    impersonate=request.impersonate,
+                    impersonate=curl_cffi.cast_impersonation(request.impersonate),
                     **request.params,
                 )
             ) as curl_resp:
-                yield AbstractResponse.create(curl_resp)
                 self.__sync_session_cookies(request.url)
+                yield AbstractResponse.create(curl_resp)
 
             return
 
@@ -275,26 +372,38 @@ class HTTPClient:
         ) as aio_resp:
             yield AbstractResponse.create(aio_resp)
 
+    async def flaresolverr_request(
+        self,
+        url: AbsoluteHttpURL,
+        **params: Unpack[flaresolverr.RequestParams],
+    ) -> FlareSolverrResponse:
+        flare = self.flaresolverr
+        if not flare:
+            raise ScrapeError(
+                "Flaresolverr Required", "This request needs a real running browser to execute javascript"
+            )
+        flare.check_can_connect()
+        return await self._flaresolverr_request(url, **params)
+
     async def _flaresolverr_request(
         self,
         url: AbsoluteHttpURL,
-        data: Any | None = None,
-    ) -> AbstractResponse[Any]:
+        /,
+        **params: Unpack[flaresolverr.RequestParams],
+    ) -> FlareSolverrResponse:
         """Make a request with FlareSolverr.
 
         Returns an AbstractResponse confirmed to not be a DDOS Guard page, even if flaresolverr fails to detect/solve a challenge"""
 
-        assert self.flaresolverr
-        solution = await self.flaresolverr.request(url, data)
+        flare = self.flaresolverr
+        assert flare
+        assert not flare.is_down
+        solution = await flare.request(url, **params)
         self.cookies.update_cookies(solution.cookies)
-        flaresolverr.verify_solution(self.config.network.user_agent, solution)
-        return AbstractResponse.create(solution)
-
-    @contextlib.asynccontextmanager
-    async def rate_limit_ctx(self, domain: str, json_check: JSONCheck | None = None) -> AsyncGenerator[None]:
-        with enter_context(JSON_CHECK, json_check):
-            async with self.limiter.per_domain[domain], self.limiter.global_:
-                yield
+        await flaresolverr.verify_solution(self.config.network.user_agent, solution)
+        self._use_flaresolverr_ua.add(url.host)
+        self._flaresolverr_ua = flaresolverr.USER_AGENT.get()
+        return FlareSolverrResponse.create(solution)
 
 
 async def _check_json(response: AbstractResponse[Any]) -> None:
@@ -320,6 +429,19 @@ class HTTPController(Protocol):
 
 class HTTPMixin(HTTPController, Protocol):
     @contextlib.asynccontextmanager
+    async def rate_limit_ctx(
+        self,
+    ) -> AsyncGenerator[None]:
+        ctx = self.__http_ctx__
+        if ctx.throttle is not None:
+            await ctx.throttle()
+
+        limiter = self.client.limiter.per_domain.get(ctx.domain, contextlib.nullcontext())
+        with enter_context(JSON_CHECK, ctx.json_check):
+            async with limiter, self.client.limiter.global_:
+                yield
+
+    @contextlib.asynccontextmanager
     async def request(
         self,
         url: AbsoluteHttpURL,
@@ -329,17 +451,22 @@ class HTTPMixin(HTTPController, Protocol):
     ) -> AsyncGenerator[AbstractResponse[Any]]:
 
         ctx = self.__http_ctx__
-        if ctx.throttle is not None:
-            await ctx.throttle()
-
         kwargs.setdefault("impersonate", ctx.impersonate)
         kwargs["headers"] = ctx.headers | kwargs.setdefault("headers", {})
 
         async with (
-            self.client.rate_limit_ctx(ctx.domain, ctx.json_check),
+            self.rate_limit_ctx(),
             self.client.request(url, method, **kwargs) as resp,
         ):
             yield resp
+
+    async def flaresolverr_request(
+        self,
+        url: AbsoluteHttpURL,
+        **kwargs: Unpack[flaresolverr.RequestParams],
+    ) -> FlareSolverrResponse:
+        async with self.rate_limit_ctx():
+            return await self.client.flaresolverr_request(url, **kwargs)
 
     async def request_json(
         self,
@@ -403,24 +530,6 @@ class HTTPControllerProxy[T: HTTPMixin]:
         self.text = http.request_text
         self.redirect = http.request_redirect
         self.location = http.request_location
-
-
-def _create_curl_session(config: Config) -> AsyncSession[CurlResponse]:
-    loop = asyncio.get_running_loop()
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=CurlCffiWarning)
-        acurl = AsyncCurl(loop=loop)
-
-    return AsyncSession(
-        loop=loop,
-        async_curl=acurl,
-        impersonate="chrome",
-        verify=bool(config.network.ssl_context),
-        proxy=str(proxy) if (proxy := config.network.proxy) else None,
-        timeout=config.network.curl_timeout,
-        max_redirects=8,
-    )
 
 
 @final

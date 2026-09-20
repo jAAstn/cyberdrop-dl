@@ -5,12 +5,13 @@ import json
 import logging
 import queue
 import sys
+from collections.abc import MutableMapping
 from contextvars import ContextVar
 from enum import StrEnum
 from io import StringIO
 from logging.handlers import QueueHandler, QueueListener
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, final, override
+from typing import TYPE_CHECKING, Any, ClassVar, final, override
 
 from rich._log_render import LogRender
 from rich.console import Console, Group
@@ -43,6 +44,8 @@ _DEFAULT_CONSOLE_WIDTH = 240
 _MAIN_LOG_LISTENER: ContextVar[QueueListener] = ContextVar("_MAIN_LOG_LISTENER")
 _CONSOLE_LOG_LISTENER: ContextVar[QueueListener] = ContextVar("_CONSOLE_LOG_LISTENER")
 _LOG_TO_CONSOLE: ContextVar[bool] = ContextVar("LOG_TO_CONSOLE", default=True)
+LOG_HTTP_TRAFFIC: ContextVar[bool] = ContextVar("LOG_HTTP_TRAFFIC", default=True)
+MAX_ATTACHMENT_SIZE = 20 * 1e6
 
 
 class HandlerName(StrEnum):
@@ -106,6 +109,12 @@ class JsonLogRecord(logging.LogRecord):
 logging.setLogRecordFactory(JsonLogRecord)
 
 
+class LoggerAdapter[T: logging.Logger](logging.LoggerAdapter[T]):
+    def process[T2: MutableMapping[str, Any]](self, msg: str, kwargs: T2) -> tuple[str, T2]:
+        kwargs.setdefault("extra", {}).update(self.extra)
+        return msg, kwargs
+
+
 class CDLFormater(logging.Formatter):
     _CDL_FORMAT: ClassVar[logging.PercentStyle] = logging.PercentStyle("%(message)s")
 
@@ -116,6 +125,8 @@ class CDLFormater(logging.Formatter):
         else:
             content = self._style.format(record)
 
+        if getattr(record, "cdl_no_truncate", False):
+            return content
         return truncated_preview(content, env.MAX_LOG_MSG_LENGTH)
 
 
@@ -174,8 +185,13 @@ class LogHandler(RichHandler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             return super().emit(record)
-        except Exception:
-            logger.critical("Unable to log", exc_info=True)
+        except Exception as e:  # noqa: BLE001
+            self.handleError(record, e)
+
+    @override
+    def handleError(self, record: logging.LogRecord, e: Exception | None = None) -> None:
+        logger.critical("LOGGING ERROR. A record has been lost. Unable to log it", exc_info=e)
+        return super().handleError(record)
 
 
 class BareQueueHandler(QueueHandler):
@@ -325,18 +341,25 @@ def setup_console_logging() -> Generator[None]:
 
 
 @contextlib.contextmanager
-def setup_file_logging(file: Path, /, *, level: int = logging.DEBUG) -> Generator[None]:
+def setup_file_logging(
+    file: Path,
+    /,
+    *,
+    level: int = logging.DEBUG,
+    log_http_traffic: bool = True,
+) -> Generator[None]:
     file.parent.mkdir(parents=True, exist_ok=True)
     import mega
 
+    LOG_HTTP_TRAFFIC.set(log_http_traffic)
     if "pytest" not in sys.modules:
         logging.captureWarnings(capture=True)
 
     with (
         _setup_debug_logger() as debug_log_file,
-        file.open("w", encoding="utf8") as fp,
+        file.open("w", encoding="utf8", errors="backslashreplace") as fp,
         enter_context(MAIN_LOG_FILE, file),
-        enter_context(mega.LOG_HTTP_TRAFFIC, True),
+        enter_context(mega.LOG_HTTP_TRAFFIC, log_http_traffic),
         enter_context(mega.LOG_FILE_PROGRESS, False),
         _threaded_logger(
             log_handler=LogHandler(
@@ -389,7 +412,7 @@ def _setup_debug_logger() -> Generator[Path | None]:
     debug_log_file = debug_log_file.resolve().absolute()
 
     with (
-        debug_log_file.open("w", encoding="utf8") as fp,
+        debug_log_file.open("w", encoding="utf8", errors="backslashreplace") as fp,
         _threaded_logger(
             LogHandler(
                 level=logging.NOTSET + 1,

@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, final
+from typing import TYPE_CHECKING, Annotated, Any, Literal, final
 
-import yaml
 from cyclopts import App, Parameter
 from cyclopts.bind import normalize_tokens
-from pydantic import AfterValidator, BaseModel, Field, NonNegativeInt, PositiveInt
+from pydantic.fields import Field
+from pydantic.functional_validators import AfterValidator
+from pydantic.main import BaseModel
+from pydantic.types import NonNegativeInt, PositiveInt  # noqa: TC002
 
 from cyberdrop_dl.config.appdata import AppData
 from cyberdrop_dl.constants import DEFAULT_PARAMETER
 from cyberdrop_dl.exceptions import CDLConfigRuntimeErrorsGroup, InvalidYamlError
-from cyberdrop_dl.models import ConfigModel, merge_models
+from cyberdrop_dl.models import AdditiveArg, ConfigModel, merge_dicts, merge_models
 from cyberdrop_dl.models.types import ByteSizeSerilized  # noqa: TC001
-from cyberdrop_dl.models.validators import to_bytesize
+from cyberdrop_dl.models.validators import remove_duplicates, to_bytesize
 from cyberdrop_dl.utils import cleanup
 
 from .auth import Authentication, Notifications
@@ -43,6 +45,9 @@ class Files:
 
         Files.SCHEMA.write_text(json.dumps(Config.model_json_schema(), indent=2, ensure_ascii=False))
         Config().save_to(Files.DEFAULT)
+
+
+_ADDITIVE_ARGS: tuple[tuple[str, ...], ...] | None = None
 
 
 @Parameter(name="*")
@@ -75,6 +80,9 @@ class Config(ConfigModel, title="cyberdrop-dl config"):
     ignore_history: bool = False
     "Download files even if the already are marked as downloaded on the database"
 
+    ignore_hashes: bool = False
+    "Download files even if their hash matches a file downloaded on the database"
+
     jdownloader: Jdownloader = Field(default_factory=Jdownloader)
     logs: Logs = Field(default_factory=Logs)
     max_children: MaxChildren = Field(default_factory=MaxChildren)
@@ -103,21 +111,30 @@ class Config(ConfigModel, title="cyberdrop-dl config"):
     network: Network = Field(default_factory=Network)
     notifications: Notifications = Field(default_factory=Notifications)
 
+    restrict_path: Annotated[
+        tuple[Literal["unix", "windows", "no_emoji", "ascii"], ...],
+        AfterValidator(remove_duplicates),
+        Parameter(alias="restrict-filenames"),
+    ] = ()
     sort: Sort = Field(default_factory=Sort)
     subfolders: SubFolders = Field(default_factory=SubFolders)
     ui: UIOptions = Field(default_factory=UIOptions)
+    update_check: Annotated[bool, Parameter(alias=("-U"))] = True
+    "Check for updates at the end of the session"
 
     _resolved: bool = False
-    _source: Path | None = None
+    _sources: tuple[Path, ...] = ()
 
-    def __repr_args__(self) -> list[tuple[str, Path | None]]:
-        return [("source", self._source)]
+    def __repr_args__(self) -> list[tuple[str, tuple[Path, ...]]]:
+        return [("source", self._sources)]
 
     @property
     def source(self) -> Path | None:
-        return self._source
+        return self._sources[0] if self._sources else None
 
     def dump_yaml(self) -> str:
+        import yaml
+
         return yaml.safe_dump(self.model_dump(mode="json"), default_flow_style=False)
 
     def save_to(self, file: Path) -> None:
@@ -125,22 +142,31 @@ class Config(ConfigModel, title="cyberdrop-dl config"):
         file.write_text(self.dump_yaml(), encoding="utf8")
 
     @staticmethod
-    def from_file(file: Path, *, _save_if_not_found: bool = False) -> Config:
+    def load(data: dict[str, Any]) -> Config:
+        return Config.model_validate(data, by_alias=True, by_name=True)
+
+    @staticmethod
+    def from_file(file: Path) -> Config:
+        return Config.from_files(file, file.with_suffix(f".override{file.suffix}"))
+
+    @staticmethod
+    def from_files(file: Path, *overrides: Path) -> Config:
         try:
-            content = file.read_text()
+            data = _load_yaml(file)
         except FileNotFoundError:
-            default = Config()
-            if _save_if_not_found:
-                default.save_to(file)
-            return default
+            sources = []
+            data = {}
 
-        try:
-            data = yaml.safe_load(content) or {}
-        except yaml.YAMLError as e:
-            raise CDLConfigRuntimeErrorsGroup("Invalid YAML file", (InvalidYamlError(file, e),)) from None
+        else:
+            sources = [file]
+            for override in overrides:
+                if override.is_file():
+                    logger.info("Found config override '%s'", override)
+                    sources.append(override)
+                    data = merge_dicts(data, _load_yaml(override))
 
-        config = Config.model_validate(data)
-        config._source = file
+        config = Config.load(data)
+        config._sources = tuple(sources)
         return config
 
     @staticmethod
@@ -165,13 +191,29 @@ class Config(ConfigModel, title="cyberdrop-dl config"):
             cleanup.rm_empty_dirs(self.logs.effective_log_folder)
         self._resolved = True
 
+    def _additive_args(self) -> tuple[tuple[str, ...], ...]:
+        global _ADDITIVE_ARGS  # noqa: PLW0603
+        if _ADDITIVE_ARGS is None:
+            _ADDITIVE_ARGS = tuple(sorted(AdditiveArg.resolve(self)))  # pyright: ignore[reportConstantRedefinition]
+        return _ADDITIVE_ARGS
+
     def __or__(self, other: Config) -> Config:
         if not isinstance(other, Config):
             return NotImplemented
-        me = merge_models(self, other)
-        me._source = self.source
+
+        me = merge_models(self, other, self._additive_args())
+        me._sources = self._sources
         me.logs._created_at = self.logs._created_at
         return me
+
+
+def _load_yaml(file: Path) -> dict[str, Any]:
+    import yaml
+
+    try:
+        return yaml.safe_load(file.read_text()) or {}
+    except yaml.YAMLError as e:
+        raise CDLConfigRuntimeErrorsGroup("Invalid YAML file", (InvalidYamlError(file, e),)) from None
 
 
 def parse_tokens(tokens: Iterable[str] | str | None) -> list[str]:
@@ -191,18 +233,6 @@ def _resolve_paths(model: BaseModel) -> None:
 
         elif isinstance(field_value, BaseModel):
             _resolve_paths(field_value)
-
-
-def merge_additive_args[T: list[str] | tuple[str, ...]](cli_values: T, config_values: Iterable[str]) -> T:
-    match cli_values:
-        case ["+", *_]:
-            new_values = set(config_values).union(cli_values)
-        case ["-", *_]:
-            new_values = set(config_values) - set(cli_values)
-        case _:
-            return cli_values
-
-    return type(cli_values)(sorted(new_values - {"+", "-"}))
 
 
 def _coerce(*, config: Config | None = None) -> Config:

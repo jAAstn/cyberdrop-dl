@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import dataclasses
 import time
@@ -45,9 +46,9 @@ class FilesterCrawler(Crawler):
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
             case ["d", slug]:
-                return await self.file(scrape_item, slug)
+                await self.file(scrape_item, slug)
             case ["f", slug]:
-                return await self.folder(scrape_item, slug)
+                await self.folder(scrape_item, slug)
             case _:
                 raise ValueError
 
@@ -57,7 +58,7 @@ class FilesterCrawler(Crawler):
             return
 
         soup = await self._request_soup_w_pass(scrape_item.url, scrape_item.password)
-        file = _parse_file(soup)
+        file = await asyncio.to_thread(_parse_file, soup)
 
         if file.hash and await self.check_complete_by_hash(scrape_item.url, file.hash.algo, file.hash.cheksum):
             return
@@ -73,6 +74,7 @@ class FilesterCrawler(Crawler):
             custom_filename=filename,
             # Downloads expire after 30 minutes so we delay the request for it
             debrid_link=lambda: self.api.download(slug),
+            thumbnail=file.thumb,
         )
 
     @error_handling_wrapper
@@ -84,16 +86,16 @@ class FilesterCrawler(Crawler):
         scrape_item.setup_as_album(title, album_id=album_id)
 
         async for soup in pages:
-            self._iter_children(scrape_item, _extract_files(soup))
+            self._iter_children(scrape_item, _extract_files(soup), files=True)
             subfolders.extend(_extract_subfolders(soup))
 
         self._iter_children(scrape_item, dict.fromkeys(subfolders))
 
-    def _iter_children(self, scrape_item: ScrapeItem, children: Iterable[str]) -> None:
+    def _iter_children(self, scrape_item: ScrapeItem, children: Iterable[str], *, files: bool = False) -> None:
         for child in children:
             web_url = self.parse_url(child, self.origin)
             new_scrape_item = scrape_item.create_child(web_url)
-            self.create_task(self.run(new_scrape_item))
+            self.create_task(self.run(new_scrape_item, check_referer=files))
             scrape_item.add_children()
 
     async def _folder_pager(self, url: AbsoluteHttpURL, password: str | None) -> AsyncGenerator[BeautifulSoup]:
@@ -150,6 +152,7 @@ class File:
     name: str
     uploaded_at: str
     mime_type: str
+    thumb: str | None
     hash: Hash | None = None
 
 
@@ -205,4 +208,5 @@ def _parse_file(soup: BeautifulSoup) -> File:
         hash=hash_,
         uploaded_at=file_attr("Uploaded"),
         mime_type=file_attr("Type"),
+        thumb=open_graph.get_image(soup),
     )

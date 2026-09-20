@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import asyncio
-import dataclasses
-import hashlib
-import json
-from typing import TYPE_CHECKING, ClassVar, Self, override
+from typing import TYPE_CHECKING, ClassVar, override
 
-from cyberdrop_dl import multi_process
+from cyberdrop_dl import env
 from cyberdrop_dl.clients.http import HTTPConfig
 from cyberdrop_dl.crawlers import Registry
 from cyberdrop_dl.crawlers.crawler import Crawler, SupportedDomains, SupportedPaths
-from cyberdrop_dl.exceptions import ScrapeError
+from cyberdrop_dl.exceptions import DDOSGuardError, ScrapeError
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import css, extr_text, parse_url
-from cyberdrop_dl.utils.dataclass import DictDataclass
+from cyberdrop_dl.utils import css, extr_text
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 
 if TYPE_CHECKING:
@@ -71,97 +66,62 @@ class FileditchCrawler(Crawler):
         if await self.check_complete_from_referer(scrape_item.url):
             return
 
-        soup = await self.request_pow_soup(scrape_item.url)
-        if soup.select_one(".gone-path"):
-            raise ScrapeError(410)
-        src = _extract_dl_url(soup)
+        src, thumb = await self.request_download(scrape_item.url)
         if src.path == _HOMEPAGE_CATCH_ALL:
             raise ScrapeError(422)
 
         filename, ext = self.get_filename_and_ext(src.name)
-        await self.handle_file(src, scrape_item, filename, ext)
+        await self.handle_file(src, scrape_item, filename, ext, thumbnail=thumb)
 
-    async def _solve_pow(self, url: AbsoluteHttpURL, pow: ProofOfWork) -> int:  # noqa: A002
-        try:
-            async with self._startup_lock:
-                self.log.warning("Solving proof of work challenge for %s\n%s", url, dict(pow))
-                solution = await asyncio.to_thread(multi_process.race, _pow_worker, pow.pow_challenge, pow.pow_diff)
-
-        except TimeoutError:
-            msg = f"Unable to solve challenge {pow.pow_challenge} after {multi_process.TIMEOUT.get()} seconds"
-            raise TimeoutError(msg) from None
-
-        self.log.debug("Solved pow %s after %s seconds", pow.pow_challenge, solution.elapsed)
-        return solution.value
-
-    async def request_pow_soup(self, url: AbsoluteHttpURL) -> bs4.BeautifulSoup:
-        soup = await self.request_soup(url)
-        if form := soup.select_one("form#pow-form"):
-            pow = ProofOfWork.parse(form)  # noqa: A001
-            nonce = await self._solve_pow(url, pow)
-            soup = await self.request_soup(
-                url,
-                "POST",
-                headers={"Referer": str(url), "Origin": "https://fileditchfiles.me"},
-                data=dict(pow) | {"pow_nonce": nonce},
-            )
-            if soup.select_one("form#pow-form"):
-                raise ScrapeError(422, "Proof of work verification failed")
-        return soup
+    async def request_download(self, url: AbsoluteHttpURL) -> tuple[AbsoluteHttpURL, str | None]:
+        resp = await self.flaresolverr_request(url, wait=env.FILEDITCH_WAIT)
+        soup = await resp.soup()
+        if soup.select_one(".gone-path"):
+            raise ScrapeError(410)
+        if soup.select("form"):
+            raise DDOSGuardError("Flaresolverr failed proof of work challenge")
+        src = self.parse_url(css.select(soup, "a.btn[download]", "href"))
+        _check_url(src)
+        return src, _extr_thumb(soup)
 
 
-@dataclasses.dataclass(slots=True)
-class ProofOfWork(DictDataclass):
-    orig_ref: str
-    pow_challenge: str
-    pow_ts: int
-    pow_diff: int
-    pow_sig: str
+@FileditchCrawler.__http_config__
+class FileditchAlbumsCrawler(Crawler):
+    # Keep this as a separate class. Site changes domains frequently
+    # Let the scrape mapper dispatch to the best matching domain
+    SUPPORTED_PATHS: ClassVar[SupportedPaths] = {
+        "Album": "/<album_id>",
+    }
+    PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://fileditchalbums.st")
+    DOMAIN: ClassVar[str] = "fileditchalbums"
+    FOLDER_DOMAIN: ClassVar[str] = FileditchCrawler.FOLDER_DOMAIN
 
-    def __post_init__(self) -> None:
-        self.pow_ts = int(self.pow_ts)
-        self.pow_diff = int(self.pow_diff)
+    async def fetch(self, scrape_item: ScrapeItem) -> None:
+        match scrape_item.url.parts[1:]:
+            case [album_id]:
+                await self.album(scrape_item, album_id)
+            case _:
+                raise ValueError
 
-    @classmethod
-    def parse(cls, form: bs4.Tag) -> Self:
-        def inputs():
-            for field in css.iselect(form, "input[name]"):
-                yield css.attr(field, "name"), css.attr(field, "value")
-
-        return cls.from_dict(dict(inputs()))
-
-
-def _pow_worker(worker_idx: int, _: int, challenge: str, difficulty: int) -> int:
-    nonce = worker_idx * 15_000
-    while True:
-        checksum = hashlib.sha256(f"{challenge}:{nonce}".encode()).digest()
-        if _is_valid_solution(checksum, difficulty):
-            return nonce
-        nonce += 1
+    @error_handling_wrapper
+    async def album(self, scrape_item: ScrapeItem, album_id: str) -> None:
+        soup = await self.request_soup(scrape_item.url)
+        name = self.create_title(css.select_text(soup, "h1.title"))
+        scrape_item.setup_as_album(name, album_id=album_id)
+        for new_item in self.iter_children(scrape_item, soup, ".grid article.card > a.thumb[href]"):
+            self.handle_embed(new_item)
+            scrape_item.add_children()
 
 
-def _is_valid_solution(checksum: bytes, difficulty: int) -> bool:
-    idx, rem = difficulty >> 3, difficulty & 7
-    if idx and checksum[:idx] != b"\x00" * idx:
-        return False
-    if rem:
-        return (checksum[idx] & (0xFF << (8 - rem) & 0xFF)) == 0
-    return True
-
-
-def _extract_dl_url(soup: bs4.BeautifulSoup) -> AbsoluteHttpURL:
-    js_join = '].join("")'
-    js_text = css.select_text(soup, f"script:-soup-contains-own('{js_join}')")
-    array = extr_text(js_text, "= [", js_join)
+def _extr_thumb(soup: bs4.Tag) -> str | None:
     try:
-        return _parse_url_parts(f"[{array}]")
-    except ValueError as e:
-        raise ScrapeError(422, "Unable to extract download URL") from e
+        return extr_text(css.select(soup, ".vposter[style]", "style"), "background-image:url(", ")").strip("'")
+    except (css.SelectorError, ValueError):
+        pass
 
 
-def _parse_url_parts(js_array: str) -> AbsoluteHttpURL:
-    parts: list[str] = json.loads(js_array)
-    url = parse_url("".join(parts), trim=False)
-    if not (url.query.get("md5") and url.query.get("expires")):
-        raise ValueError(url)
-    return url
+def _check_url(url: AbsoluteHttpURL) -> AbsoluteHttpURL:
+    for params in [("md5", "expires"), ("exp", "sig")]:
+        if all(map(url.query.get, params)):
+            return url
+    raise ScrapeError(422, f"Unable to extract a valid download URL. Found: {url}")
