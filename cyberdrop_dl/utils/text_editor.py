@@ -33,6 +33,10 @@ def open(file_path: Path) -> None:  # noqa: A001
     """Opens file in the OS's text editor."""
     cmd = editor_cmd()
     if not cmd:
+        if sys.platform == "win32":
+            logger.info(f"Opening '{file_path}' with the OS's default editor...")
+            os.startfile(file_path)
+            return
         msg = "No default text editor found"
         raise ValueError(msg)
 

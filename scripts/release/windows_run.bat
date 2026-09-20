@@ -1,4 +1,5 @@
 @echo off
 echo Starting cyberdrop-dl...
-cyberdrop-dl-patched
+cd /d C:\Users\jAstn\Desktop\GithubRepos\cyberdrop-dl
+uv run cyberdrop-dl
 pause
