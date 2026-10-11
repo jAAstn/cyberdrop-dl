@@ -9,6 +9,7 @@ from cyberdrop_dl.filepath import get_filename_and_ext
 from cyberdrop_dl.mediaprops import Subtitle
 from cyberdrop_dl.url_objects import AbsoluteHttpURL, ScrapeItem
 from cyberdrop_dl.utils import css, parse_url, unique
+from cyberdrop_dl.utils._url import remove_query_params
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 
 if TYPE_CHECKING:
@@ -31,7 +32,9 @@ class RedditImagesCrawler(Crawler):
     @classmethod
     @override
     def transform_url(cls, url: AbsoluteHttpURL) -> AbsoluteHttpURL:
-        url = super().transform_url(url).with_query(None)
+        url = super().transform_url(url)
+        if "external" not in url.host:
+            url = remove_query_params(url, keep=("s",))
         if url.host == "preview.redd.it":
             return url.with_host(cls.PRIMARY_URL.host)
         return url
@@ -62,10 +65,10 @@ class RedditVideoCrawler(Crawler):
     @classmethod
     @override
     def transform_url(cls, url: AbsoluteHttpURL) -> AbsoluteHttpURL:
-        url = super().transform_url(url).with_query(None)
+        url = remove_query_params(super().transform_url(url), keep=("s",))
         match url.parts[1:]:
             case [_, _]:
-                return url.parent
+                return url.parent.with_query(url.query)
             case _:
                 return url
 
