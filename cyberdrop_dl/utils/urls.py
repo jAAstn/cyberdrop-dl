@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, overload
 
+import yarl
 from typing_extensions import TypeIs
 
-if TYPE_CHECKING:
-    from collections.abc import Iterable
+from cyberdrop_dl.utils import Deduper
 
-    import yarl
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Mapping
 
     from cyberdrop_dl.url_objects import AbsoluteHttpURL
 
@@ -27,8 +28,6 @@ def fix_multi_slashes(url: str) -> str:
 
 
 def str_to_url(url: str) -> yarl.URL:
-    import yarl
-
     if not url:
         raise ValueError("Empty URL", url)
 
@@ -79,8 +78,6 @@ def remove_trailing_slash(url: AbsoluteHttpURL) -> AbsoluteHttpURL:
 
 
 def matches_any_host(url: yarl.URL, hosts: Iterable[str]) -> bool:
-    import yarl
-
     if not url.host:
         return False
 
@@ -100,3 +97,64 @@ def _is_absolute_http_url(url: yarl.URL) -> TypeIs[AbsoluteHttpURL]:
 
 def remove_query_params[T: yarl.URL](url: T, keep: tuple[str, ...]) -> T:
     return cast("T", url.with_query([(name, value) for name, value in url.query.items() if name in keep] or None))
+
+
+def is_ip_address(address: str) -> bool:
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    else:
+        return True
+
+
+def is_url(obj: object) -> TypeIs[yarl.URL]:
+    return type(obj) is yarl.URL
+
+
+@overload
+def sort_query(item: Mapping[str, str]) -> list[tuple[str, str]]: ...
+
+
+@overload
+def sort_query[T: yarl.URL](item: T) -> T: ...
+
+
+def sort_query[T: yarl.URL](item: Mapping[str, str] | T) -> list[tuple[str, str]] | T:
+    if is_url(item):
+        return item.with_query(sort_query(item.query))
+
+    return sorted(item.items())
+
+
+def path_qs(url: yarl.URL) -> str:
+    return url.path_qs
+
+
+def path_qs_frag(url: yarl.URL) -> str:
+    return f"{url.path_qs}#{url.fragment}" if url.fragment else url.path_qs
+
+
+def path_frag(url: yarl.URL) -> str:
+    return f"{url.path}#{url.fragment}" if url.fragment else url.path
+
+
+def reverse_dns_name(host: str) -> tuple[str, ...]:
+    return tuple(reversed(host.split(".")))
+
+
+def is_within_domain(root_domain: str, host: str) -> bool:
+    host = host.lower().removeprefix("www.")
+    root_domain = root_domain.lower().removeprefix("www.")
+    return (host == root_domain) or host.endswith("." + root_domain.removeprefix("."))
+
+
+class URLDeduper(Deduper[str]):
+    def __init__(self, url_id: Callable[[yarl.URL], str] = str) -> None:
+
+        def get_key(url: yarl.URL) -> str:
+            return url_id(sort_query(url))
+
+        super().__init__(get_key)

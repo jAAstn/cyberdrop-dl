@@ -18,9 +18,9 @@ from cyberdrop_dl.clients.request import Request, RequestParams
 from cyberdrop_dl.clients.response import AbstractResponse, FlareSolverrResponse
 from cyberdrop_dl.cookies import make_simple_cookie
 from cyberdrop_dl.exceptions import DDOSGuardError, DownloadError, ScrapeError
-from cyberdrop_dl.signature import simple_repr
+from cyberdrop_dl.signature import dataclass_repr
 from cyberdrop_dl.utils import enter_context, truncated_preview
-from cyberdrop_dl.utils.dataclass import ConfigDataclass, frozen
+from cyberdrop_dl.utils.dataclass import ConfigDataclass, struct
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -53,6 +53,7 @@ class _LazyResponseLog:
 
     def __json__(self) -> dict[str, Any]:
         resp = self.resp.__json__()
+        resp["response_headers"] = {k: truncated_preview(v) for k, v in self.resp.headers.items()}
         if type(resp["content"]) is str:
             resp["content"] = truncated_preview(resp["content"], env.MAX_LOG_MSG_LENGTH if self.content_only else 100)
 
@@ -86,6 +87,9 @@ class HTTPLimiter:
 
 
 @final
+@dataclass_repr(
+    "config", "_ssl_context", "_cookies", "_flaresolverr", "limiter", "request_done_callback", "_use_flaresolverr_ua"
+)
 class HTTPClient:
     request_done_callback: RequestDoneCallback | None = None
 
@@ -105,16 +109,6 @@ class HTTPClient:
         self._wreq_session: WreqClient | None = None
         self._session: aiohttp.ClientSession
         self._download_session: aiohttp.ClientSession
-
-    __repr__ = simple_repr(
-        "config",
-        "_ssl_context",
-        "_cookies",
-        "_flaresolverr",
-        "limiter",
-        "request_done_callback",
-        "_use_flaresolverr_ua",
-    )
 
     @property
     def ssl_context(self):
@@ -138,7 +132,9 @@ class HTTPClient:
             jar = self._wreq_session.cookie_jar
             assert jar is not None
             for (domain, path), cookie in self.cookies.cookies.items():
-                jar.add(cookie.output(), f"https://{domain}{path}")
+                for morsel in cookie.values():
+                    jar.add(str(morsel), f"https://{domain}{path}")
+
         return self._wreq_session
 
     @property
@@ -210,6 +206,14 @@ class HTTPClient:
     def _create_curl_session(self) -> AsyncSession[CurlResponse]:
         session = curl_cffi.create_session(self.config)
         session.cookies = {cookie.key: cookie.value for cookie in self.cookies}
+        for (domain, path), cookie in self.cookies.cookies.items():
+            for morsel in cookie.values():
+                session.cookies.set(
+                    morsel.key,
+                    morsel.value,
+                    domain=morsel["domain"] or domain,
+                    path=morsel["path"] or path or "/",
+                )
         return session
 
     def create_aiohttp_session(self) -> aiohttp.ClientSession:
@@ -520,25 +524,14 @@ class HTTPMixin(HTTPController, Protocol):
 
 
 @final
-class HTTPControllerProxy[T: HTTPMixin]:
-    def __init__(self, http: T) -> None:
-        self.controller = http
-        self.__call__ = http.request
-        self.json = http.request_json
-        self.soup = http.request_soup
-        self.text = http.request_text
-        self.redirect = http.request_redirect
-        self.location = http.request_location
-
-
-@final
-@frozen
+@struct
 class HTTPConfig(ConfigDataclass):
     __attr_name__: ClassVar[str] = "__http_config__"
     headers: dict[str, str] | None = None
     impersonate: str | bool | None = None
     rate_limit: RateLimit | None = None
     json_check: JSONCheck | None = None
+    probe_method: HttpMethod | None = None
 
     @classmethod
     def default_headers(
@@ -580,6 +573,7 @@ class HTTPContext:
     json_check: JSONCheck | None = None
     impersonate: str | bool | None = None
     throttle: Callable[[], Awaitable[Any]] | None = None
+    probe_method: HttpMethod = "HEAD"
     headers: dict[str, str] = dataclasses.field(default_factory=dict)
 
     @classmethod
@@ -598,6 +592,7 @@ class HTTPContext:
             impersonate=config.impersonate,
             json_check=config.json_check,
             throttle=throttle,
+            probe_method=config.probe_method or "HEAD",
         )
 
 

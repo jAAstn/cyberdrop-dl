@@ -3,15 +3,15 @@ from __future__ import annotations
 import contextlib
 import itertools
 import logging
+import operator
 import sys
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Concatenate, Self, cast, overload
 
 from cyberdrop_dl.constants import MISSING
-from cyberdrop_dl.utils._url import parse_http_url as parse_url  # noqa: F401
-from cyberdrop_dl.utils._url import remove_trailing_slash  # noqa: F401
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable
+    from collections.abc import Callable, Generator, Iterable, Iterator
     from contextvars import ContextVar
 
 
@@ -69,6 +69,9 @@ def get_system_information() -> dict[str, Any]:
     import sqlite3
     import ssl
 
+    import certifi
+    import wassima
+
     def get_common_name() -> str:
         system = platform.system()
 
@@ -103,6 +106,8 @@ def get_system_information() -> dict[str, Any]:
             "python": f"{platform.python_version()} {platform.python_implementation()}",
             "common_name": get_common_name(),
             "sqlite": sqlite3.sqlite_version,
+            "certifi": certifi.__version__,
+            "wassima": wassima.__version__,
             "openSSL": ssl.OPENSSL_VERSION,
         }
     )
@@ -132,17 +137,10 @@ def basic_auth(username: str, password: str) -> str:
     return f"Basic {token}"
 
 
-def unique[T](itr: Iterable[T], /, key: Callable[[T], Any] | None = None) -> Generator[T]:
-    seen: set[Any] = set()
-    for elem in itr:
-        lookup = elem if key is None else key(elem)
-        if lookup not in seen:
-            seen.add(lookup)
-            yield elem
-
-
 def fast_cache[T, R](fn: Callable[[T], R]) -> Callable[[T], R]:
-    "Like functools.cache but for single argument function and without all the stats logic"
+    """Like functools.cache but for single argument function and without all the stats logic
+
+    cache never expires"""
     cache: dict[T, R] = {}
 
     def compute(obj: T) -> R:
@@ -160,3 +158,93 @@ def b64_pad(b64_string: str) -> str:
     if pad := len(b64_string) % 4:
         return b64_string + "=" * (4 - pad)
     return b64_string
+
+
+def bind_fn[T, **P, R](
+    func: Callable[Concatenate[T, P], R],
+    value: T,
+) -> Callable[P, R]:
+    """Bind `value` as the first positional argument of `func`.
+
+    The returned callable accepts the rest of `func`'s arguments.
+
+    Similiar to functools.partial but this preserves type annotations
+    """
+
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        return func(value, *args, **kwargs)
+
+    return wrapper
+
+
+type AnythingButTuple = (
+    str
+    | bytes
+    | int
+    | float
+    | list[Any]
+    | Mapping[Any, Any]
+    | set[Any]
+    | frozenset[Any]
+    | bool
+    | range
+    | Callable[..., Any]
+    | BaseException
+    | type
+)
+
+
+@overload
+def strict_variadic[T: AnythingButTuple](value: T) -> tuple[T, ...]: ...
+
+
+@overload
+def strict_variadic[T: AnythingButTuple](value: tuple[T, ...]) -> tuple[T, ...]: ...
+
+
+@overload
+def strict_variadic[T: tuple[Any, ...]](value: T) -> T: ...
+
+
+def strict_variadic(value: Any) -> tuple[Any, ...]:
+    if type(value) is tuple:
+        return value
+    return (value,)
+
+
+class Deduper[R]:
+    def __init__(self, get_key: Callable[[Any], R] | None = None) -> None:
+        self.seen: set[R] = set()
+        self.get_key: Callable[[Any], R] | None = get_key
+
+    def __contains__(self, obj: Any) -> bool:
+        lookup = obj if self.get_key is None else self.get_key(obj)
+        if lookup in self.seen:
+            return True
+        self.seen.add(lookup)
+        return False
+
+    def __len__(self) -> int:
+        return len(self.seen)
+
+    def __iter__(self) -> Iterator[R]:
+        return iter(self.seen)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(seen={self.seen!r})"
+
+    def clear(self) -> None:
+        return self.seen.clear()
+
+    def filter[Z](self, items: Iterable[Z]) -> Iterable[Z]:
+        for item in items:
+            if item not in self:
+                yield item
+
+    @classmethod
+    def by_attr(cls, attr: str) -> Self:
+        return cls(operator.attrgetter(attr))
+
+
+def unique[T](itr: Iterable[T], /, key: Callable[[T], Any] | None = None) -> Iterable[T]:
+    return Deduper(key).filter(itr)

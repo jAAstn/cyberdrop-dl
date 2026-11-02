@@ -27,6 +27,7 @@ from cyberdrop_dl.models.types import (
 from cyberdrop_dl.models.validators import strings
 
 ALIASES: dict[str, str] = {}
+MAX_RATE_LIMIT = 10000.0
 
 
 def _alias(name: str, *extras: str, flag: str = "enabled") -> Parameter:
@@ -56,7 +57,10 @@ class _SeparatePosts(ConfigModel):
 
 class SubFolders(ConfigGroup, name=None):
     create: Annotated[bool, _alias("subfolders", flag="create")] = True
-    "Enable/disable the createtion of nested sub-folders"
+    "Enable/disable the creation of nested sub-folders"
+
+    group_loose_files: bool = True
+    "Create a subfolder named 'Loose Files' for individual files not part of any album/thread"
 
     include: _SubFoldersInclude = Field(default_factory=_SubFoldersInclude)
     separate_posts: _SeparatePosts = Field(default_factory=_SeparatePosts)
@@ -104,7 +108,9 @@ class Logs(ConfigGroup, name=None):  # noqa: PLW1641
     "Delete all log files inside `--logs.folder` if they are older that this"
 
     rotate: bool = False
-    "Append current datetimme to every log file on each run"
+    "Add current datetime to every log file on each run"
+
+    rotate_date_position: Literal["prefix", "suffix"] = "suffix"
 
     _created_at: dt.datetime = PrivateAttr(default_factory=dt.datetime.now)
 
@@ -126,10 +132,15 @@ class Logs(ConfigGroup, name=None):  # noqa: PLW1641
 
         def resolve(path: Path) -> Path:
             log_file = folder / path
-            if self.rotate:
-                file_name = f"{log_file.stem}_{now_file_iso}{log_file.suffix}"
-                log_file = log_file.parent / now_folder_iso / file_name
-            return log_file
+            if not self.rotate:
+                return log_file
+
+            stem = (
+                f"{now_file_iso}_{log_file.stem}"
+                if self.rotate_date_position == "prefix"
+                else f"{log_file.stem}_{now_file_iso}"
+            )
+            return log_file.parent / now_folder_iso / f"{stem}{log_file.suffix}"
 
         self.files = LogFiles.model_construct(
             None, **{name: resolve(value) for name, value in self.files.model_dump().items()}
@@ -361,7 +372,7 @@ class Network(ConfigGroup):
     proxy: Annotated[FalsyAsNone[HttpURL], Parameter(alias=("http-proxy"))] = None
     "HTTP/HTTPS proxy"
 
-    rate_limit: PositiveFloat = 25
+    rate_limit: PositiveFloat = Field(default=25.0, le=MAX_RATE_LIMIT)
     "Max number of requests per second (only used while scraping)"
 
     connection_timeout: PositiveFloat = 15

@@ -7,12 +7,13 @@ from typing import TYPE_CHECKING, ClassVar
 
 from cyberdrop_dl import aio
 from cyberdrop_dl.clients.http import HTTPConfig
-from cyberdrop_dl.crawlers.crawler import Crawler, DownloadConfig, SupportedPaths
+from cyberdrop_dl.crawlers.crawler import Crawler, DownloadConfig, SupportedDomains, SupportedPaths
 from cyberdrop_dl.exceptions import ScrapeError
 from cyberdrop_dl.mediaprops import Resolution
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import css, extr_text, json_ld, parse_url
+from cyberdrop_dl.utils import css, extr_text, json_ld
 from cyberdrop_dl.utils.errors import error_handling_wrapper
+from cyberdrop_dl.utils.urls import URLDeduper, parse_http_url
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -51,6 +52,7 @@ class NoodleMagazineCrawler(Crawler):
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://noodlemagazine.com")
     DOMAIN: ClassVar[str] = "noodlemagazine"
     FOLDER_DOMAIN: ClassVar[str] = "NoodleMagazine"
+    SUPPORTED_DOMAINS: ClassVar[SupportedDomains] = "exporntoons.net", "noodlemagazine.com", "mat6tube.com"
 
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
@@ -65,7 +67,7 @@ class NoodleMagazineCrawler(Crawler):
     async def search(self, scrape_item: ScrapeItem, query: str) -> None:
         scrape_item.setup_as_album(self.create_title(f"{query} [search]"))
         init_page = int(scrape_item.url.query.get("p") or 1)
-        seen_urls: set[AbsoluteHttpURL] = set()
+        seen_urls: URLDeduper = URLDeduper()
 
         for page in itertools.count(1, init_page):
             n_videos = 0
@@ -73,10 +75,11 @@ class NoodleMagazineCrawler(Crawler):
             soup = await self.request_soup(page_url)
 
             for new_scrape_item in self.iter_children(scrape_item, soup, Selector.VIDEOS):
-                if new_scrape_item.url not in seen_urls:
-                    seen_urls.add(new_scrape_item.url)
-                    n_videos += 1
-                    self.create_task(self.run(new_scrape_item, check_referer=True))
+                if new_scrape_item.url in seen_urls:
+                    continue
+
+                n_videos += 1
+                self.create_task(self.run(new_scrape_item, check_referer=True))
 
             if n_videos < _VIDEO_PER_PAGE:
                 break
@@ -116,7 +119,7 @@ def _parse_video(soup: BeautifulSoup) -> Video:
     playlist = json.loads(extr_text(playlist_js, "window.playlist = ", ";\nwindow.ads"))
 
     resolution, src = max(_parse_sources(playlist["sources"]))
-    content_url = parse_url(props["contentUrl"])
+    content_url = parse_http_url(props["contentUrl"])
 
     return Video(
         title=props["name"],
@@ -131,4 +134,4 @@ def _parse_video(soup: BeautifulSoup) -> Video:
 def _parse_sources(sources: list[dict[str, str]]) -> Generator[tuple[Resolution, AbsoluteHttpURL]]:
     for source in sources:
         resolution = Resolution.parse(source["label"])
-        yield resolution, parse_url(source["file"])
+        yield resolution, parse_http_url(source["file"])

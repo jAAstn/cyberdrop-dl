@@ -8,7 +8,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any, Self, final
 
-from cyberdrop_dl import __version__, aio, dependencies, env, ffmpeg, stats
+from cyberdrop_dl import __version__, aio, constants, dependencies, env, ffmpeg, stats
 from cyberdrop_dl.cache import cache_context
 from cyberdrop_dl.clients.downloads import DownloadClient
 from cyberdrop_dl.clients.http import HTTPClient
@@ -20,8 +20,9 @@ from cyberdrop_dl.hasher import Hasher
 from cyberdrop_dl.logs import LoggerAdapter, capture_logs, log_spacer
 from cyberdrop_dl.models.validators import bytesize_to_str
 from cyberdrop_dl.progress import REFRESH_RATE, TUI_DISABLED
-from cyberdrop_dl.signature import simple_repr
+from cyberdrop_dl.signature import dataclass_repr
 from cyberdrop_dl.sorter import Sorter
+from cyberdrop_dl.url_objects import FinishedDownload
 from cyberdrop_dl.utils import enter_context, get_system_information
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ logger = LoggerAdapter(logging.getLogger(__name__), extra={"cdl_no_truncate": Tr
 
 
 @final
+@dataclass_repr("cli_args", "_config", "http_client", "download_client")
 class Manager:
     def __init__(
         self,
@@ -51,7 +53,7 @@ class Manager:
         self.cli_args: CLIarguments = cli_args or CLIarguments()
         self._config: Config | None = config
 
-        self._completed_downloads: list[MediaItem] = []
+        self._completed: list[FinishedDownload] = []
         self._hasher: Hasher | None = None
 
         self.http_client = HTTPClient(self.config)
@@ -62,8 +64,6 @@ class Manager:
         self.deduper: Czkawka
         self.sorter: Sorter
         self.exit_stack: contextlib.ExitStack = contextlib.ExitStack()
-
-    __repr__ = simple_repr("cli_args", "_config", "http_client", "download_client")
 
     @property
     def hasher(self) -> Hasher:
@@ -105,14 +105,18 @@ class Manager:
                 del self.deduper
                 del self.sorter
 
-    def add_completed(self, media_item: MediaItem) -> None:
-        if media_item.is_segment:
+    async def post_download(self, item: MediaItem) -> None:
+        if item.is_segment or not item.downloaded:
             return
-        self._completed_downloads.append(media_item)
+
+        if self.config.hashing.mode is constants.HashMode.IN_PLACE:
+            await self.hasher.hash_item(item)
+
+        self._completed.append(FinishedDownload.from_item(item))
 
     @property
-    def completed_downloads(self) -> list[MediaItem]:
-        return self._completed_downloads
+    def completed_downloads(self) -> list[FinishedDownload]:
+        return self._completed
 
     def log_config_settings(self) -> None:
         logger.info(f"Running cyberdrop-dl v{__version__}")
@@ -136,8 +140,15 @@ class Manager:
 
     def __print_stats(self, scrape_stats: ScrapeStats) -> None:
 
-        elapsed = dt.timedelta(seconds=int(time.monotonic() - scrape_stats.start_time))
-        total_data_written = bytesize_to_str(self.scrape_mapper.tui.downloads.bytes_downloaded)
+        scrape_time = time.monotonic() - scrape_stats.start_time
+        startup_time = scrape_stats.start_time - constants.START_TIME
+
+        def format_td(seconds: float) -> str:
+            seconds, millis = divmod(seconds, 1)
+            formatted = str(dt.timedelta(seconds=seconds))
+            if millis:
+                formatted += f"{str(millis)[1:5]}"
+            return formatted
 
         logger.info("Run Stats:", extra={"color": "cyan"})
         logger.info(f"  Config file: {self.config.source}")
@@ -145,8 +156,10 @@ class Manager:
         logger.info(f"  URLs: {scrape_stats.count:,}")
         logger.info(f"  URL groups: {len(scrape_stats.unique_groups):,}")
         logger.info(f"  Logs folder: {self.config.logs.effective_log_folder}")
-        logger.info(f"  Total runtime: {elapsed}")
-        logger.info(f"  Total downloaded data: {total_data_written}")
+        logger.info(
+            f"  Total runtime: {format_td(scrape_time + startup_time)} (startup: {startup_time:.03f}s, scrape: {format_td(scrape_time)})",
+        )
+        logger.info("  Total downloaded data: %s", bytesize_to_str(self.scrape_mapper.tui.downloads.bytes_downloaded))
 
         if scrape_stats.domain_stats:
             log_spacer()

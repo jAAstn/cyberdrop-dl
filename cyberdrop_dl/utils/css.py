@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import html
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast, overload
+from typing import TYPE_CHECKING, NamedTuple, cast, overload
 
 from bs4 import BeautifulSoup
 from bs4.filter import SoupStrainer
 
 from cyberdrop_dl.exceptions import ScrapeError
+from cyberdrop_dl.utils import strict_variadic
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -53,17 +54,6 @@ class HTMLForm:
     inputs: dict[str, str | None]
 
 
-class JsonLD(dict[str, Any]):
-    @overload
-    def __getitem__(self, key: Literal["uploadDate"], /) -> str: ...  # pyright: ignore[reportNoOverloadImplementation]
-
-    @overload
-    def __getitem__(self, key: str, /) -> Any:
-        """Return self[key]."""
-
-    __getitem__ = dict.__getitem__
-
-
 def _select_one(tag: Tag, selector: str) -> Tag:
     """Same as `tag.select_one` but asserts the result is not `None`"""
     result = tag.select_one(selector)
@@ -85,8 +75,14 @@ def select_tag_text(html: str, tag_name: str) -> str:
     return select_text(soup(html, parse_only=tag_name), tag_name)
 
 
-def attr_or_none(tag: Tag, attribute: str) -> str | None:
+def attr_or_none(tag: Tag, *attributes: str) -> str | None:
     """Same as `tag.get(attribute)` but asserts the result is a single str"""
+    for attribute in attributes:
+        if result := _attr_or_none(tag, attribute):
+            return result
+
+
+def _attr_or_none(tag: Tag, attribute: str) -> str | None:
     attribute_ = attribute
     if attribute_ == "srcset":
         if (srcset := tag.get(attribute_)) and type(srcset) is str:
@@ -101,12 +97,11 @@ def attr_or_none(tag: Tag, attribute: str) -> str | None:
     return value
 
 
-def attr(tag: Tag, attribute: str) -> str:
+def attr(tag: Tag, *attributes: str) -> str:
     """Same as `tag.get(attribute)` but asserts the result is not `None` and is a single string"""
-    result = attr_or_none(tag, attribute)
-    if result is None:
-        raise SelectorError(f"{attribute = } not found")
-    return result
+    if result := attr_or_none(tag, *attributes):
+        return result
+    raise SelectorError(f"{attributes = } not found")
 
 
 def text(tag: Tag, *, strip: bool = True) -> str:
@@ -149,9 +144,7 @@ def iselect(tag: Tag, selector: str, attribute: str | None = None) -> Generator[
 
 
 def iselect_text(soup: Tag, /, selector: str, contains: tuple[str, ...] | str = ()) -> Generator[str]:
-    if isinstance(contains, str):
-        contains = (contains,)
-
+    contains = strict_variadic(contains)
     for tag in iselect(soup, selector):
         content = text(tag)
         for key in contains:
@@ -173,7 +166,7 @@ def parse_srcset(srcset: str) -> Generator[tuple[str, str]]:
 
 def best_from_srcset(srcset: str) -> str:
     options = dict(parse_srcset(srcset))
-    best = max(options, key=lambda decriptor: int(decriptor.rstrip("wx")))
+    best = max(options, key=lambda decriptor: float(decriptor.rstrip("wx")))
     return options[best]
 
 
@@ -216,7 +209,14 @@ def parse_form(form: Tag, /) -> HTMLForm:
     return HTMLForm(cast("HttpMethod", method), action, inputs)
 
 
+def where(selector1: str, selector2: str, *selectors: str) -> str:
+    selectors = selector1, selector2, *selectors
+    return ":where(" + ", ".join(selectors) + ")"
+
+
 def soup(content: str, parse_only: tuple[str, ...] | str | None = None) -> BeautifulSoup:
+    if not content:
+        raise ScrapeError(204, "Received empty HTML response")
     return BeautifulSoup(content, HTML_PARSER, parse_only=SoupStrainer(parse_only) if parse_only is not None else None)
 
 

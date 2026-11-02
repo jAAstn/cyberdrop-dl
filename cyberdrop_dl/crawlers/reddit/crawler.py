@@ -3,14 +3,15 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, ClassVar, override
 
-from cyberdrop_dl.crawlers.crawler import Crawler, SupportedDomains, SupportedPaths
+from cyberdrop_dl import aio
+from cyberdrop_dl.crawlers.crawler import Crawler, SupportedDomains, SupportedPaths, auto_task_id
 from cyberdrop_dl.crawlers.reddit.api import ArcticShiftAPI, SearchQuery
 from cyberdrop_dl.filepath import get_filename_and_ext
 from cyberdrop_dl.mediaprops import Subtitle
 from cyberdrop_dl.url_objects import AbsoluteHttpURL, ScrapeItem
-from cyberdrop_dl.utils import css, parse_url, unique
-from cyberdrop_dl.utils._url import remove_query_params
+from cyberdrop_dl.utils import css, unique
 from cyberdrop_dl.utils.errors import error_handling_wrapper
+from cyberdrop_dl.utils.urls import parse_http_url, remove_query_params
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 
 
 @Crawler.db_path_builder("url")
-class RedditImagesCrawler(Crawler):
+class RedditImagesCrawler(Crawler, wiki_site="RedditImages"):
     SUPPORTED_DOMAINS: ClassVar[SupportedDomains] = "preview.redd.it", "external-preview.redd.it", "i.redd.it"
     SUPPORTED_PATHS: ClassVar[SupportedPaths] = {"Image": "i.redd.it/<id>.>ext>"}
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://i.redd.it")
@@ -40,11 +41,7 @@ class RedditImagesCrawler(Crawler):
         return url
 
     async def fetch(self, scrape_item: ScrapeItem) -> None:
-        match scrape_item.url.parts[1:]:
-            case [_]:
-                await self.image(scrape_item)
-            case _:
-                raise ValueError
+        await self.image(scrape_item)
 
     @error_handling_wrapper
     async def image(self, scrape_item: ScrapeItem) -> None:
@@ -56,7 +53,8 @@ class RedditImagesCrawler(Crawler):
 
 
 @Crawler.db_path_builder("url")
-class RedditVideoCrawler(Crawler):
+class RedditVideoCrawler(Crawler, wiki_site="RedditVideos"):
+    SUPPORTED_DOMAINS: ClassVar[SupportedDomains] = "v.redd.it", "packaged-media.redd.it"
     SUPPORTED_PATHS: ClassVar[SupportedPaths] = {"Video": "v.redd.it/<video_id>"}
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://v.redd.it")
     DOMAIN: ClassVar[str] = "v.redd.it"
@@ -74,7 +72,7 @@ class RedditVideoCrawler(Crawler):
 
     async def fetch(self, scrape_item: ScrapeItem) -> None:
         match scrape_item.url.parts[1:]:
-            case [video_id]:
+            case [video_id, *_]:
                 await self.video(scrape_item, video_id)
             case _:
                 raise ValueError
@@ -178,18 +176,20 @@ class RedditCrawler(Crawler):
         )
 
     async def _iter_posts(self, scrape_item: ScrapeItem, submissions: AsyncGenerator[Submission]) -> None:
-        async with contextlib.aclosing(submissions) as posts:
+        sleep = aio.periodic_sleep(10)
+        async with aio.non_cancelling_taskgroup() as tg, contextlib.aclosing(submissions) as posts:
             async for post in posts:
                 new_item = scrape_item.create_child(self.parse_url(post["permalink"]))
-                self.post(new_item, post)
+                tg.create_task(self._post_task(new_item, post))
                 scrape_item.add_children()
+                await sleep()
 
-    @error_handling_wrapper
-    def post(self, scrape_item: ScrapeItem, post: Submission) -> None:
+    async def _post(self, scrape_item: ScrapeItem, post: Submission) -> None:
         scrape_item.uploaded_at = post["created_utc"]
-        scrape_item.setup_as_post(
-            self.create_title(self.create_separate_post_title(post["title"], post["id"], post["created_utc"]))
-        )
+        title = self.create_separate_post_title(post["title"], post["id"], post["created_utc"])
+        scrape_item.setup_as_post(self.create_title(title))
+
+        sleep = aio.periodic_sleep(10)
         self.create_eager_task(self.write_metadata(scrape_item, post["id"], post))
         for url in unique(_extract_urls(post, self.config.crawlers.reddit)):
             if url.host == self.PRIMARY_URL.host:
@@ -197,11 +197,14 @@ class RedditCrawler(Crawler):
 
             self.handle_embed(scrape_item.create_child(url))
             scrape_item.add_children()
+            await sleep()
+
+    _post_task = auto_task_id(error_handling_wrapper(_post))
 
     @error_handling_wrapper
     async def submission(self, scrape_item: ScrapeItem, post_id: str) -> None:
         post = await self.api.post(post_id)
-        self.post(scrape_item, post)
+        await self._post(scrape_item, post)
 
 
 def _extract_urls(post: Submission, config: RedditConfig) -> Generator[AbsoluteHttpURL]:
@@ -220,8 +223,8 @@ def _extract_urls(post: Submission, config: RedditConfig) -> Generator[AbsoluteH
                 name, _ = get_filename_and_ext(media_id, mime_type=mimetype)
             yield RedditImagesCrawler.PRIMARY_URL / name
 
-    yield parse_url(post.get("url_overridden_by_dest") or post["url"])
+    yield parse_http_url(post.get("url_overridden_by_dest") or post["url"])
 
     if config.content_urls and (content := post.get("selftext_html")):
         soup = css.soup(content, parse_only="a")
-        yield from map(parse_url, css.iselect(soup, "a[href]", "href"))
+        yield from map(parse_http_url, css.iselect(soup, "a[href]", "href"))

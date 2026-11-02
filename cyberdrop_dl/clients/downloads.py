@@ -15,7 +15,8 @@ from cyberdrop_dl.clients import etag
 from cyberdrop_dl.clients.http import JSON_CHECK, check_http_status
 from cyberdrop_dl.constants import USE_RETRY_PATH, FileExt
 from cyberdrop_dl.exceptions import DownloadError, InvalidContentTypeError, SlowDownloadError
-from cyberdrop_dl.signature import simple_repr
+from cyberdrop_dl.signature import dataclass_repr
+from cyberdrop_dl.url_objects import ByteRange
 from cyberdrop_dl.utils import dates, enter_context
 
 if TYPE_CHECKING:
@@ -39,6 +40,7 @@ _SLOW_DOWNLOAD_PERIOD: int = 10  # seconds
 
 
 @final
+@dataclass_repr("config", "speed_limiter", "chunk_size")
 class DownloadClient:
     """Low level class that performs the actual HTTP download operations."""
 
@@ -59,8 +61,6 @@ class DownloadClient:
                 upper_limit,
             )
 
-    __repr__ = simple_repr("config", "_supports_ranges", "speed_limiter", "chunk_size")
-
     @property
     def http_client(self) -> HTTPClient:
         return self.manager.http_client
@@ -76,13 +76,31 @@ class DownloadClient:
             media_item.download_folder = resolve_download_dir(media_item.download_folder, self.config)
             media_item.partial_file = media_item.download_folder / f"{name}{constants.TempExt.PART}"
 
-        resume_point = 0
+        bytes_downloaded = 0
         media_item.headers.pop(hdrs.RANGE, None)  # Delete ranges from previous attempts
-        if self.SUPPORTS_RANGES and media_item.partial_file and (size := await aio.get_size(media_item.partial_file)):
-            resume_point = size
-            media_item.headers[hdrs.RANGE] = f"bytes={size}-"
+        byte_range: ByteRange | None = media_item.extra_info.get("byte_range")
 
-        await asyncio.sleep(self.config.downloads.total_delay)
+        if self.SUPPORTS_RANGES:
+            if media_item.partial_file and (size := await aio.get_size(media_item.partial_file)):
+                bytes_downloaded = size
+                try:
+                    byte_range = (byte_range or ByteRange(0)) + size
+                except ValueError:
+                    logger.warning("Deleting partial file '%s'. BYTE-RANGE is unsatisfiable", media_item.partial_file)
+                    await aio.unlink(media_item.partial_file)
+                    bytes_downloaded = 0
+
+        elif byte_range:
+            raise DownloadError(422, f"{hdrs.RANGE} header required but downloader does not supports it: {byte_range}")
+
+        if byte_range:
+            media_item.headers[hdrs.RANGE] = str(byte_range)
+
+        delay = self.config.downloads.total_delay
+        if not media_item.is_segment:
+            delay += media_item.extra_info.get("delay", 0)
+
+        await asyncio.sleep(delay)
 
         download_url = await media_item.resolve()
         with enter_context(JSON_CHECK, media_item.json_check):
@@ -91,7 +109,7 @@ class DownloadClient:
                 headers=media_item.headers,
                 impersonate=media_item.extra_info.get("impersonate"),
             ) as resp:
-                return await self._process_response(media_item, domain, resume_point, resp)
+                return await self._process_response(media_item, domain, bytes_downloaded, resp)
 
     async def _predownload_skip(self, media_item: MediaItem, domain: str) -> bool | None:
         should_download, should_skip = await self.get_final_file_info(media_item, domain)
@@ -216,16 +234,17 @@ class DownloadClient:
         if not media_item.path:
             media_item.path = media_item.download_folder / media_item.filename
 
-        if await aio.is_file(media_item.path):
-            await self.manager.database.history.add_filesize(domain, media_item)
+        if size := await aio.get_size(media_item.path):
+            media_item.size = size
+            await self.manager.database.history.add_filesize(media_item)
 
     async def get_final_file_info(self, media_item: MediaItem, domain: str) -> tuple[bool, bool]:  # noqa: C901, PLR0912, PLR0915
         """Complicated checker for if a file already exists, and was already downloaded."""
+        # TODO: This black magic needs a refactor + tests
         if not media_item.path:
             media_item.path = media_item.download_folder / media_item.filename
 
-        part_suffix = media_item.path.suffix + constants.TempExt.PART
-        media_item.partial_file = media_item.path.with_suffix(part_suffix)
+        media_item.partial_file = constants.TempExt.PART.append_to(media_item.path)
 
         expected_size = media_item.size
         proceed = True
@@ -265,7 +284,7 @@ class DownloadClient:
                     logger.info(f"Found {downloaded_filename} locally, trying to resume")
                     assert media_item.size
                     size = await aio.get_size(media_item.partial_file)
-                    if size is not None and size >= media_item.size:
+                    if size is not None and size > media_item.size:
                         logger.info(f"Deleting partial file {media_item.partial_file}. Size is out of bound")
                         await aio.unlink(media_item.partial_file)
 
@@ -304,25 +323,30 @@ class DownloadClient:
                 break
 
             media_item.filename = downloaded_filename
+            media_item.path = media_item.download_folder / media_item.filename
+            media_item.partial_file = constants.TempExt.PART.append_to(media_item.path)
+
         media_item.download_filename = media_item.path.name
         await self.manager.database.history.add_download_filename(domain, media_item)
         return proceed, skip
 
-    async def iterate_filename(self, complete_file: Path, media_item: MediaItem) -> tuple[Path, Path]:
+    async def iterate_filename(self, file: Path, media_item: MediaItem) -> tuple[Path, Path]:
         """Iterates the filename until it is unique."""
-        part_suffix = complete_file.suffix + constants.TempExt.PART
-        partial_file = complete_file.with_suffix(part_suffix)
+
+        partial_file = constants.TempExt.PART.append_to(file)
+
         for iteration in itertools.count(1):
-            filename = f"{complete_file.stem} ({iteration}){complete_file.suffix}"
-            temp_complete_file = media_item.download_folder / filename
-            if not await aio.exists(
-                temp_complete_file
-            ) and not await self.manager.database.history.check_filename_exists(filename):
+            filename = f"{file.stem} ({iteration}){file.suffix}"
+            temp_file = media_item.download_folder / filename
+            if not any(
+                await aio.gather(aio.exists(temp_file), self.manager.database.history.check_filename_exists(filename))
+            ):
                 media_item.filename = filename
-                complete_file = media_item.download_folder / media_item.filename
-                partial_file = complete_file.with_suffix(part_suffix)
+                file = media_item.download_folder / media_item.filename
+                partial_file = constants.TempExt.PART.append_to(file)
                 break
-        return complete_file, partial_file
+
+        return file, partial_file
 
 
 def _check_filesize_limits(media: MediaItem, config: Config) -> bool:
@@ -334,7 +358,7 @@ def _check_filesize_limits(media: MediaItem, config: Config) -> bool:
     if media.ext in FileExt.VIDEO:
         return not limits.video or media.size in limits.video
     if media.ext in FileExt.AUDIO:
-        return not limits.image or media.size in limits.image
+        return not limits.audio or media.size in limits.audio
 
     return not limits.non_media or media.size in limits.non_media
 
@@ -496,7 +520,6 @@ def resolve_download_dir(download_folder: Path, config: Config) -> Path:
     if config.subfolders.create or USE_RETRY_PATH.get():
         return download_folder
 
-    while download_folder.parent != config.download_folder:
-        download_folder = download_folder.parent
-
-    return download_folder
+    # Only keep the fist subfolder (if any)
+    subfolders = download_folder.relative_to(config.download_folder).parts
+    return config.download_folder.joinpath(*subfolders[:1])

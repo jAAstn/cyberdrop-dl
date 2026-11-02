@@ -14,6 +14,7 @@ permissions: {}
 
 jobs:
   test_ffmpeg:
+    timeout-minutes: 10
     name: FFmpeg tests
     permissions:
       contents: read
@@ -27,17 +28,16 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.0
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: 3.14
-          enable-cache: false
+          enable-cache: true
 
       - name: Install dependencies
         run: |
           sudo apt install ffmpeg -y
-          uv sync --locked --all-extras
+          uv sync --no-build --locked --all-extras
 
       - name: Run pytest
-        timeout-minutes: 10
         run: |
-          uv run pytest tests/test_ffmpeg.py -v --cov
+          uv run pytest tests/test_ffmpeg.py -v

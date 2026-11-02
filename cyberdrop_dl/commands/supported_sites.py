@@ -3,6 +3,8 @@ from __future__ import annotations
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
+from cyberdrop_dl.utils import strict_variadic
+
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
 
@@ -15,11 +17,14 @@ if TYPE_CHECKING:
 def _gen_crawlers_info() -> list[CrawlerInfo]:
     from cyberdrop_dl.crawlers import Registry
 
-    return sorted((crawler.INFO for crawler in Registry.get_crawlers(generic=True)), key=lambda x: x.site.casefold())
+    return sorted(
+        (crawler.INFO for crawler in Registry.get_crawlers(generic=True)),
+        key=lambda x: (x.wiki_site or x.site).casefold(),
+    )
 
 
 def as_json() -> dict[str, dict[str, Any]]:
-    return {info.site: info.__json__() for info in _gen_crawlers_info()}
+    return {info.wiki_site or info.site: info.__json__() for info in _gen_crawlers_info()}
 
 
 def as_rich_json() -> JSON:
@@ -42,7 +47,7 @@ def as_rich_table() -> Table:
 
     for crawler_info in _gen_crawlers_info():
         table.add_row(
-            crawler_info.site,
+            crawler_info.wiki_site or crawler_info.site,
             str(crawler_info.primary_url),
             "\n".join(crawler_info.supported_domains),
         )
@@ -69,7 +74,7 @@ def _generate_md_blocks(indent_level: int) -> Generator[str]:
     for info in _gen_crawlers_info():
         url = str(info.primary_url).rstrip("/")
         lines = [
-            f"{'#' * (indent_level + 1)} {info.site}",
+            f"{'#' * (indent_level + 1)} {info.wiki_site or info.site}",
             "",
             f"**Primary URL**: [{url}]({url})",
             "",
@@ -96,8 +101,7 @@ def _get_supported_paths_and_notes(crawler_info: CrawlerInfo) -> tuple[dict[str,
     notes: list[str] = []
 
     for name, paths in crawler_info.supported_paths.items():
-        if isinstance(paths, str):
-            paths = (paths,)
+        paths = strict_variadic(paths)
 
         if "direct link" in name.casefold() and paths == ("",):
             supported_paths["Direct Links"] = ()

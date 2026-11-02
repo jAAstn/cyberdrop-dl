@@ -6,11 +6,11 @@ import datetime as dt
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, final, override
 
-from cyberdrop_dl.crawlers.crawler import Crawler, SupportedDomains, SupportedPaths
+from cyberdrop_dl.crawlers.crawler import Crawler, SupportedPaths, URLConfig
 from cyberdrop_dl.crawlers.twitter.api import FXTwitterAPI, TwitterAPI, TwitterGQLSearchFilter
 from cyberdrop_dl.exceptions import ScrapeError
 from cyberdrop_dl.mediaprops import Resolution
-from cyberdrop_dl.signature import simple_repr
+from cyberdrop_dl.signature import dataclass_repr
 from cyberdrop_dl.url_objects import AbsoluteHttpURL, MediaItem
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 
@@ -22,20 +22,13 @@ if TYPE_CHECKING:
     from cyberdrop_dl.url_objects import ScrapeItem
 
 
-class TwitterShortURLCrawler(Crawler):
-    SUPPORTED_DOMAINS: ClassVar[SupportedDomains] = ("t.co",)
+@URLConfig(strict_host_match=True)
+class TwitterShortURLCrawler(Crawler, wiki_site="TwitterShortURL"):
     SUPPORTED_PATHS: ClassVar[SupportedPaths] = {"Redirect": "t.co/<short_code>"}
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://t.co")
     DOMAIN: ClassVar[str] = "t.co"
 
-    @classmethod
-    @override
-    def check_host_match(cls, host: str) -> bool:
-        return super().check_host_match(host) and host == "t.co"
-
     async def fetch(self, scrape_item: ScrapeItem) -> None:
-        if scrape_item.url.host != self.PRIMARY_URL.host:
-            raise ValueError
         await self._follow_redirect(scrape_item)
 
     @error_handling_wrapper
@@ -63,8 +56,9 @@ class TwimgCrawler(Crawler):
         if "amplify_video_thumb" in scrape_item.url.parts or scrape_item.url.suffix == ".m3u8":
             raise ValueError
         if "video" in scrape_item.url.host:
-            return await self.direct_file(scrape_item)
-        await self.photo(scrape_item)
+            await self.direct_file(scrape_item)
+        else:
+            await self.photo(scrape_item)
 
     @error_handling_wrapper
     async def photo(self, scrape_item: ScrapeItem, url: AbsoluteHttpURL | None = None) -> None:
@@ -82,9 +76,11 @@ class TwimgCrawler(Crawler):
     def _prepare_media_item(self, media_item: MediaItem) -> None:
         if media_item.referer.path == media_item.url.path and media_item.parents:
             media_item.referer = media_item.parents[0]
-            media_item.headers["Referer"] = str(media_item.referer)
+
+        media_item.headers["Referer"] = "https://x.com/"
 
 
+@URLConfig(strict_host_match=True)
 class TwitterCrawler(Crawler):
     SUPPORTED_PATHS: ClassVar[SupportedPaths] = {
         "Tweet/Thread/Article": (
@@ -119,11 +115,6 @@ class TwitterCrawler(Crawler):
             self._default_since = int(dt.datetime.combine(after, dt.time.min).timestamp())
         if before := self.config.filters.before:
             self._default_until = int(dt.datetime.combine(before, dt.time.min).timestamp())
-
-    @classmethod
-    @override
-    def check_host_match(cls, host: str) -> bool:
-        return super().check_host_match(host) and (host == "x.com" or not host.endswith("x.com"))
 
     @property
     @override
@@ -206,7 +197,7 @@ class TwitterCrawler(Crawler):
             ),
         )
 
-        with self.catch_errors((self.PRIMARY_URL / "search").with_query(api_url.query)):
+        async with self.catch_errors((self.PRIMARY_URL / "search").with_query(api_url.query)):
             self.log.info(
                 "Starting manual search for posts of %s (feed: '%s', raw_query: '%s')",
                 user,
@@ -289,6 +280,7 @@ class TwitterCrawler(Crawler):
 
 
 @final
+@dataclass_repr("since", "until", "oldest_tweet")
 class TweetsFilterer:
     def __init__(self, *, since: int | None = None, until: int | None = None) -> None:
         self.since = since
@@ -297,23 +289,21 @@ class TweetsFilterer:
         self.seen: set[str] = set()
         self.log = TwitterCrawler.get_logger()
 
-    __repr__ = simple_repr("since", "until", "oldest_tweet")
-
-    def should_skip(self, tweet: Tweet) -> tuple[bool, str]:
+    def should_skip(self, tweet: Tweet) -> str | bool:
         if tweet.id in self.seen:
-            return True, "duplicate"
+            return "duplicate"
 
         self.seen.add(tweet.id)
         if self.oldest_tweet is None or self.oldest_tweet.created_timestamp > tweet.created_timestamp:
             self.oldest_tweet = tweet
 
         if self.until and tweet.created_timestamp > self.until:
-            return True, "too new"
+            return "too new"
 
         if self.since and tweet.created_timestamp < self.since:
-            return True, "too old"
+            return "too old"
 
-        return True, ""
+        return False
 
     async def __call__(self, tweet_pages: AsyncGenerator[Iterable[Tweet]]) -> AsyncGenerator[Tweet]:
         max_old_tweets = 10
@@ -321,10 +311,9 @@ class TweetsFilterer:
             async for tweets in pages:
                 old_tweets = 0
                 for tweet in tweets:
-                    skip, reason = self.should_skip(tweet)
-                    if skip:
-                        self.log.warning("Skipping tweet %s (%s)", tweet.id, reason)
-                        if reason == "too old":
+                    if skip_reason := self.should_skip(tweet):
+                        self.log.warning("Skipping tweet %s (%s)", tweet.id, skip_reason)
+                        if skip_reason == "too old":
                             old_tweets += 1
                         continue
                     yield tweet

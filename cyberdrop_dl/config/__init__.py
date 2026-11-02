@@ -43,7 +43,7 @@ class Files:
     def update() -> None:
         import json
 
-        Files.SCHEMA.write_text(json.dumps(Config.model_json_schema(), indent=2, ensure_ascii=False))
+        Files.SCHEMA.write_text(json.dumps(Config.model_json_schema(), indent=2, ensure_ascii=False), encoding="utf8")
         Config().save_to(Files.DEFAULT)
 
 
@@ -211,13 +211,23 @@ def _load_yaml(file: Path) -> dict[str, Any]:
     import yaml
 
     try:
-        return yaml.safe_load(file.read_text()) or {}
+        return yaml.safe_load(file.read_text(encoding="utf8")) or {}
     except yaml.YAMLError as e:
         raise CDLConfigRuntimeErrorsGroup("Invalid YAML file", (InvalidYamlError(file, e),)) from None
 
 
 def parse_tokens(tokens: Iterable[str] | str | None) -> list[str]:
-    return [ALIASES.get(token, token) for token in normalize_tokens(tokens)]
+    tokens = [ALIASES.get(token, token) for token in normalize_tokens(tokens)]
+    if not (tokens and tokens[0].startswith(("https://", "http://"))):
+        return tokens
+
+    cmd = "download"
+    logger.warning(
+        "URL provided as first argument. Assuming '%s' command. Run the proper command ('%s') to suppress this warning",
+        cmd,
+        "cyberdrop-dl download <URLS> [<OPTIONS>]",
+    )
+    return [cmd, *tokens]
 
 
 def _resolve_paths(model: BaseModel) -> None:

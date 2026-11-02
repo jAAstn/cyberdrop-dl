@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import dataclasses
+from http import HTTPStatus
 from typing import TYPE_CHECKING, ClassVar, final
 
 from cyberdrop_dl import aio
+from cyberdrop_dl.clients import etag
 from cyberdrop_dl.crawlers.crawler import Crawler, SupportedPaths, URLConfig
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import css, dates, parse_url
+from cyberdrop_dl.utils import css, dates
 from cyberdrop_dl.utils.errors import error_handling_wrapper
+from cyberdrop_dl.utils.urls import parse_http_url
 
 if TYPE_CHECKING:
     import datetime as dt
@@ -27,6 +30,14 @@ class Selector:
     _VIDEO = "div.videoplayer source"
     _IMAGE = "div.image_viewer img"
     MEDIA = f"{_IMAGE}, {_VIDEO}"
+
+
+etag.register(
+    *(
+        etag.ETag(tag, "Video removed", HTTPStatus.GONE)
+        for tag in ("637be5da-11d2b", "63a05f27-11d2b", "5a56b09d-1485eb")
+    )
+)
 
 
 @URLConfig(allow_empty_path=True)
@@ -112,6 +123,6 @@ def _parse_media(soup: BeautifulSoup) -> Media:
     date_str = css.select_text(soup, Selector.DATE).split(" ", 1)[-1]
     return Media(
         date=dates.parse_format(date_str, "%m/%d/%y"),
-        src=parse_url(css.select(soup, Selector.MEDIA, "src")),
+        src=parse_http_url(css.select(soup, Selector.MEDIA, "src")),
         title=css.select_text(soup, Selector.TITLE),
     )

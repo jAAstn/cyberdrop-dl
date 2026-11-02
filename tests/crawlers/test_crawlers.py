@@ -9,10 +9,11 @@ from unittest import mock
 import pytest
 
 import tests
-from cyberdrop_dl.crawlers.crawler import compose_ep_name
+from cyberdrop_dl.crawlers.crawler import CrawlerInfo, _SupportedDomains, compose_ep_name
 from cyberdrop_dl.scrape_mapper import ScrapeMapper
 from cyberdrop_dl.url_objects import AbsoluteHttpURL, MediaItem, ScrapeItem
-from cyberdrop_dl.utils import parse_url
+from cyberdrop_dl.utils import json
+from cyberdrop_dl.utils.urls import parse_http_url
 
 from . import test_cases
 
@@ -101,14 +102,26 @@ class _NOT_NONE:  # noqa: N801, PLW1641
 NOT_NONE = _NOT_NONE()
 
 
+def _sort_expected(test_case: test_cases.CrawlerTestCase):
+
+    def gen():
+        for idx, case in enumerate(test_case.results, 1):
+            yield (case["url"], idx), case
+
+    return sorted(gen(), key=lambda x: x[1][test_case.sort_by])
+
+
 def _validate_results(crawler: Crawler, test_case: test_cases.CrawlerTestCase, results: list[MediaItem]) -> None:  # noqa: C901
-    expected_results = dict(sorted(((x["url"], idx), x) for idx, x in enumerate(test_case.results, 1)))
+    expected_results = _sort_expected(test_case)
+    results = sorted(results, key=lambda x: getattr(x, test_case.sort_by))
     origin = getattr(crawler, "PRIMARY_URL", AbsoluteHttpURL("https://google.com"))
-    for (index, expected), media_item in zip(expected_results.items(), results, strict=False):
+    for (index, expected), media_item in zip(expected_results, results, strict=False):
         for attr_name, expected_value in expected.items():
             result_value = getattr(media_item, attr_name)
             if isinstance(result_value, Path):
                 result_value = result_value.as_posix()
+            if attr_name == "metadata" and result_value:
+                result_value = json.loads(json.dumps(result_value))
 
             match expected_value:
                 case type():
@@ -177,7 +190,7 @@ async def test_direct_http_crawler(running_manager: Manager, url: str, filename:
             crawler = scrape_mapper._direct_http
             await scrape_mapper.run()
             item = ScrapeItem(
-                url=parse_url(test_case.url),
+                url=parse_http_url(test_case.url),
                 download_folder=running_manager.config.download_folder,
             )
             await crawler.fetch(item)
@@ -265,3 +278,43 @@ def test_compose_ep_name(season: int | None, ep: int | None, name: str | None, e
 def test_compose_ep_name_raise_value_error_if_empty() -> None:
     with pytest.raises(ValueError):
         compose_ep_name(None, None, "")
+
+
+def test_generic_crawlers_have_no_supported_domains() -> None:
+    from cyberdrop_dl.crawlers import Registry
+
+    for crawler in Registry.get_crawlers(concrete=False, generic=True):
+        assert type(crawler.SUPPORTED_DOMAINS) is _SupportedDomains
+        assert not crawler.SUPPORTED_DOMAINS, f"Generic crawler {crawler.NAME} should not have supported domains"
+
+
+def test_concrete_crawlers_have_supported_domains() -> None:
+    from cyberdrop_dl.crawlers import Registry
+
+    for crawler in Registry.get_crawlers(concrete=True, generic=False):
+        assert type(crawler.SUPPORTED_DOMAINS) is _SupportedDomains
+        assert crawler.SUPPORTED_DOMAINS, f"Concrete crawler {crawler.NAME} should have supported domains"
+
+
+def test_crawlers_supported_domains_do_not_overlap() -> None:
+    from cyberdrop_dl.crawlers import Registry
+
+    supported: dict[str, type[Crawler]] = {}
+
+    for crawler in Registry.get_crawlers():
+        for domain in crawler.SUPPORTED_DOMAINS:
+            other = supported.get(domain)
+            assert other is None, f"domain {domain!r} is supported by {other.NAME} and {crawler.NAME}"
+            supported[domain] = crawler
+
+
+def test_crawlers_wiki_sites_do_not_overlap() -> None:
+    from cyberdrop_dl.commands.supported_sites import _gen_crawlers_info
+
+    supported: dict[str, CrawlerInfo] = {}
+
+    for info in _gen_crawlers_info():
+        domain = info.wiki_site or info.site
+        other = supported.get(domain)
+        assert other is None, f"domain {domain!r} is supported by {other} and {info}"
+        supported[domain] = info

@@ -121,6 +121,22 @@ logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
+class ByteRange:
+    start: int
+    end: int | None = None
+
+    def __add__(self, offset: int) -> Self:
+        start = self.start + offset
+        if self.end and self.end >= start:
+            raise ValueError(f"Unsatisfiable BYTE RANGE {offset = } current_range = {self}")
+
+        return type(self)(start, self.end)
+
+    def __str__(self) -> str:
+        return f"bytes={self.start}-{self.end - 1 if self.end else ''}"
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
 class MuxVideo:
     video: AbsoluteHttpURL
     audio: AbsoluteHttpURL
@@ -130,7 +146,44 @@ class MuxVideo:
 
 
 @final
-@dataclasses.dataclass(slots=True, kw_only=True)
+@dataclasses.dataclass(slots=True, kw_only=True, frozen=True)
+class FinishedDownload:
+    # Simplified version of media item w no metadata, bounded callables and some attributes removed, to reduce memory usage
+    url: AbsoluteHttpURL
+    referer: AbsoluteHttpURL
+    original_filename: str
+    ext: str
+    size: int
+    xxhash: str | None
+    path: Path
+    id: tuple[str, ...]
+
+    def __hash__(self) -> int:
+        return hash(self.id)
+
+    @property
+    def is_segment(self) -> Literal[False]:
+        return False
+
+    @classmethod
+    def from_item(cls, item: MediaItem) -> Self:
+        assert item.size is not None
+        assert item.is_segment is False
+        return cls(
+            url=item.url,
+            referer=item.referer,
+            original_filename=item.original_filename,
+            ext=item.ext,
+            size=item.size,
+            xxhash=item.xxhash,
+            path=item.path,
+            id=item.id,
+        )
+
+
+@final
+@signature.dataclass_repr("url", "id", "debrid_url", "uploaded_at_date")
+@dataclasses.dataclass(slots=True, kw_only=True, repr=False)
 class MediaItem:
     url: AbsoluteHttpURL
     domain: str
@@ -180,8 +233,6 @@ class MediaItem:
             self.uploaded_at_date = dt.datetime.fromtimestamp(self.uploaded_at, tz=dt.UTC)
 
         self.base64_id = base64.urlsafe_b64encode("".join(self.id).encode()).decode().rstrip("=")
-
-    __repr__ = signature.simple_repr("url", "id", "debrid_url", "uploaded_at_date")
 
     def __hash__(self) -> int:
         return hash(self.id)
@@ -241,7 +292,8 @@ class RetryInfo:
 
 
 @final
-@dataclasses.dataclass(kw_only=True, slots=True)
+@signature.dataclass_repr("url", "folders", "uploaded_at")
+@dataclasses.dataclass(kw_only=True, slots=True, repr=False)
 class ScrapeItem:
     url: AbsoluteHttpURL
     part_of_album: bool = False
@@ -261,8 +313,6 @@ class ScrapeItem:
     _uploaded_at: int | None = None
     retry_info: RetryInfo | None = None
     markers: list[Any] = dataclasses.field(default_factory=list)
-
-    __repr__ = signature.simple_repr("url", "folders", "uploaded_at")
 
     @classmethod
     def from_url(cls, url: yarl.URL | str) -> Self:

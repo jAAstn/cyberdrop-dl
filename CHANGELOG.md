@@ -22,6 +22,142 @@ All notable changes to this project will be documented here. For more details, v
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [10.15.0] - 2026-11-01
+
+### Added
+
+- New `--logs.rotate-date-position` option
+- Arte.tv support
+- Support Patreon creators with custom domains. User must define the domains with the new `--crawlers.generic.patreon` option
+- Support direct media URLs (Patreon)
+- Support collections URLs (Patreon)
+- Support sub-albums (Lensdump)
+- Support folders (Doodstream)
+- Support hotlinked files (Fileditch)
+- Support custom search operators as filters (Pawchive)
+
+### Changed
+
+- Assume `download` subcommand if an URL is provided as the first CLI argument, ex: `cyberdrop-dl <URL>` is equivalent to `cyberdrop-dl download <URL>`
+
+### Fixed
+
+- Download of VODs only available at 1440p/4K without logged in cookies (Twitch)
+- `403 - Forbidden` for some downloads (Twitter, Erome)
+- Do not try to download HLS videos if they are from an active livestream (generic unsupported sites)
+- `422 - Unprocessable Content` downloading any video (Beeg)
+- Rework crawler for new site design (Leakedzone)
+
+## [10.14.0] - 2026-10-27
+
+### Added
+
+- New `--subfolders.group-loose-files` option
+- Lensdump support
+- Support subfolders (Upfile)
+- Support subtitles (VKVideo)
+
+### Changed
+
+- Ignore low config timeouts values during Flaresolverr requests. Always wait at least 1 minute for a response
+
+### Fixed
+
+- Handle posts with no audio (TikTok)
+- Do not stop entire profile scrape when a single post fails (TikTok)
+- Handle videos with no thumbnails (Kick)
+- Respect `--rate-limit` values higher than 25req/s
+- Respect `--subfolders.include.domain` for `Loose Files` folders
+
+## [10.13.0] - 2026-10-24
+
+### Added
+
+- New `--crawlers.patreon.content-urls` option
+- Upfile support
+- Picdrop support
+- PPP3 support
+- VK support
+- VKVideo support
+
+### Changed
+
+- Only disable Flaresolverr after 5 wrong/missing solutions instead of 1
+
+### Fixed
+
+- All tweets being skipped (Twitter)
+- Some files not being parsed while downloading a post (Patreon)
+- Do not download thumbnails from embedded images (Simpcity)
+- Do not disable Flaresolverr when a request for a specific site is blocked (ex: IP ban)
+
+### Security
+
+- Updated CCADB embedded bundle to remove compromised eMudhra (emSign) certificates
+
+## [10.12.1] - 2026-10-20
+
+### Fixed
+
+- Do not crash if an input file has invalid URLs
+- Scraping being limited to 1 concurrent URL when a site's scrape queue exceeds its limit even after the queue shrinks back below it
+- `--hashing.post-download` never hashing any files
+- Thread URLs found within a another thread always being skipped even if ` --max-thread-depth` is greater than 0
+
+## [10.12.0] - 2026-10-17
+
+### Added
+
+- BunnyCDN support
+- Pixabay support
+- Archve support
+- Tiktikstream support
+- Smotrim support
+- Findr support
+- X-minus support
+- Betterome support
+- Area51 support
+- Support '/ads/go' redirect (Xenforo)
+- Support nested folders (YandexDisk)
+- Support 'themen' threads (Celebforum)
+- Embeds support (Fileditch)
+
+### Changed
+
+- Prefer H.265 over H.264 streams of the same resolution (m3u8)
+- Enable simpcity support
+- Try to download expired content (Imagepond)
+
+### Deprecated
+
+- Support for database schemas older that v10.2.1
+- Support for python 3.12
+
+### Removed
+
+- WeTransfer support
+- YTboob support
+
+### Fixed
+
+- Infinite pagination (Rumble)
+- Extract URLs from iframes hidden inside a `spoiler` tag (Xenforo)
+- '401 Unauthorized' on all downloads (SendVid)
+- Do not download placeholder "unavailable" videos (SendVid)
+- Do not download placeholder "unavailable" images (ImgBox)
+- Download of AES-128 segments with no IV (HLS)
+- Respect 'EXT-X-BYTERANGE' for HTTP requests (HLS)
+- Attachments detection (Discourse)
+- Challenge detection (Fileditch)
+- Download albums with 45+ items (Fileditch Albums)
+- Some download errors always being reported as `TimeoutError`
+
+## [10.11.1] - 2026-10-11
+
+### Fixed
+
+- Downloads of signed URLs (Fileditch)
+
 ## [10.11.0] - 2026-10-10
 
 ### Added

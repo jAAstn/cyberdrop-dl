@@ -10,7 +10,7 @@ from typing_extensions import ReadOnly
 from cyberdrop_dl import aio, env
 from cyberdrop_dl.cache import disk_cached_method
 from cyberdrop_dl.clients.http import HTTPConfig
-from cyberdrop_dl.crawlers.crawler import API, Crawler, SupportedPaths
+from cyberdrop_dl.crawlers.crawler import API, Crawler, SupportedDomains, SupportedPaths, URLConfig
 from cyberdrop_dl.exceptions import PasswordProtectedError, ScrapeError
 from cyberdrop_dl.url_objects import AbsoluteHttpURL, ScrapeItem, ScrapeItemType
 from cyberdrop_dl.utils.errors import error_handling_wrapper
@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
 
 @HTTPConfig(rate_limit=(4, 10))
+@URLConfig(strict_host_match=True)
 class GoFileCrawler(Crawler):
+    SUPPORTED_DOMAINS: ClassVar[SupportedDomains] = ("gofile.io",)
     SUPPORTED_PATHS: ClassVar[SupportedPaths] = {
         "Folder / File": "/d/<content_id>",
         "Direct link": (
@@ -44,7 +46,7 @@ class GoFileCrawler(Crawler):
         self.api.check_resp(resp)
 
     async def __async_post_init__(self) -> None:
-        with self.catch_errors(self.api.ENTRYPOINT), self.disable_on_error("Unable create temp account"):
+        async with self.catch_errors(self.api.ENTRYPOINT), self.disable_on_error("Unable create temp account"):
             self.api.key = self.config.auth.gofile.api_key or await self.api.create_temp_account()
             self.update_cookies({"accountToken": self.api.key})
 

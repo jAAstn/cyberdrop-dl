@@ -14,8 +14,9 @@ from cyberdrop_dl.crawlers.crawler import API, Crawler, SupportedPaths
 from cyberdrop_dl.exceptions import ScrapeError
 from cyberdrop_dl.mediaprops import Resolution
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import extr_text, parse_url, traversal, xor_decrypt
+from cyberdrop_dl.utils import extr_text, traversal, xor_decrypt
 from cyberdrop_dl.utils.errors import error_handling_wrapper
+from cyberdrop_dl.utils.urls import URLDeduper, parse_http_url
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable
@@ -58,7 +59,7 @@ def _parse_url(b64_url: str) -> AbsoluteHttpURL:
     url = _decrypt_url(b64_url)
     if not url:
         raise ScrapeError(422, f"Unknown encrypted URL: {b64_url}")
-    return parse_url(url, relative_to=_PRIMARY_URL)
+    return parse_http_url(url, relative_to=_PRIMARY_URL)
 
 
 @HTTPConfig(rate_limit=(4, 1))
@@ -171,13 +172,15 @@ class XhamsterCrawler(Crawler):
                 for img in Gallery.parse(initials).images:
                     yield img
 
-        async with self.new_task_group() as tg:
+        sleep = aio.periodic_sleep(10)
+        async with aio.non_cancelling_taskgroup() as tg:
             async for index, img in aio.aenumerate(images(), start=1):
                 if img.src in downloaded:
                     continue
 
                 tg.create_task(self._image(scrape_item.create_child(img.url), img, index))
                 scrape_item.add_children()
+                await sleep()
 
     @error_handling_wrapper
     async def _image(self, scrape_item: ScrapeItem, img: Image, index: int) -> None:
@@ -323,7 +326,7 @@ def _parse_xplayer_sources(xplayer_sources: dict[str, Any]) -> Iterable[Format]:
     if not xplayer_sources:
         return
 
-    seen_urls: set[AbsoluteHttpURL] = set()
+    seen_urls: URLDeduper = URLDeduper()
 
     def parse_format(format_dict: dict[str, str], codec: str) -> Generator[Format]:
         for key in ("url",):
@@ -339,7 +342,6 @@ def _parse_xplayer_sources(xplayer_sources: dict[str, Any]) -> Iterable[Format]:
             if url in seen_urls:
                 continue
 
-            seen_urls.add(url)
             res = Resolution.parse(quality)
             if res == Resolution.unknown() and (multi := next((p for p in url.parts if p.startswith("multi=")), None)):
                 best = next(reversed(multi.split(",")))

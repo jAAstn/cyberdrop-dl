@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING, ClassVar
 from cyberdrop_dl import aio
 from cyberdrop_dl.crawlers.crawler import Crawler, SupportedPaths
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import css, parse_url
+from cyberdrop_dl.utils import css
 from cyberdrop_dl.utils.errors import error_handling_wrapper
+from cyberdrop_dl.utils.urls import parse_http_url
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -44,10 +45,13 @@ class MultPornCrawler(Crawler):
         name, date = await _extract_info(soup)
         scrape_item.uploaded_at = self.parse_iso_date(date)
         scrape_item.setup_as_album(self.create_title(name))
-        async with self.new_task_group() as tg:
+
+        sleep = aio.periodic_sleep(10)
+        async with aio.non_cancelling_taskgroup() as tg:
             for img in _extract_images(soup):
                 tg.create_task(self.direct_file(scrape_item, img))
                 scrape_item.add_children()
+                await sleep()
 
     @error_handling_wrapper
     async def video(self, scrape_item: ScrapeItem) -> None:
@@ -62,7 +66,7 @@ class MultPornCrawler(Crawler):
 def _extract_images(soup: BeautifulSoup) -> Generator[AbsoluteHttpURL]:
     subpath = "/styles/juicebox_medium/public/"
     for img in css.iselect(soup, ".content .jb-image img", "src"):
-        url = parse_url(img)
+        url = parse_http_url(img)
         path = url.path.replace(subpath, "/")
         yield url.with_path(path)
 

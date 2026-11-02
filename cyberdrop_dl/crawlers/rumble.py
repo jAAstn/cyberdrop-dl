@@ -11,12 +11,12 @@ from cyberdrop_dl.crawlers.crawler import API, Crawler, SupportedPaths, auto_tas
 from cyberdrop_dl.exceptions import DDOSGuardError, ScrapeError
 from cyberdrop_dl.mediaprops import Resolution, Subtitle
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import css, m3u8, parse_url, traversal
-from cyberdrop_dl.utils._url import remove_query_params
+from cyberdrop_dl.utils import css, m3u8, traversal
 from cyberdrop_dl.utils.errors import error_handling_wrapper
+from cyberdrop_dl.utils.urls import parse_http_url, remove_query_params
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import AsyncGenerator, Generator, Iterable
 
     import yarl
     from bs4 import BeautifulSoup
@@ -85,7 +85,7 @@ class RumbleCrawler(Crawler):
     }
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://rumble.com")
     DOMAIN: ClassVar[str] = "rumble"
-    NEXT_PAGE_SELECTOR: ClassVar[str] = "nav a[href*=page]:has(svg)"
+    NEXT_PAGE_SELECTOR: ClassVar[str] = "nav a[href*='page=']:has(svg)"
 
     def __post_init__(self) -> None:
         self.api: RumbleAPI = RumbleAPI.from_crawler(self)
@@ -136,21 +136,40 @@ class RumbleCrawler(Crawler):
         await self._iter_videos(scrape_item)
 
     async def _iter_videos(self, scrape_item: ScrapeItem) -> None:
-        async for soup in self.web_pager(scrape_item.url):
-            found_videos: bool = False
-            for video in map(_parse_video_obj, _find_video_objs(soup)):
-                found_videos = True
-                new_item = scrape_item.create_child(video.permalink)
-                self.create_eager_task(self.video_task(new_item, video))
-                scrape_item.add_children()
+        sleep = aio.periodic_sleep(10)
+        async with aio.non_cancelling_taskgroup() as tg:
+            async for soup in self.pager(scrape_item.url):
+                found_videos: bool = False
+                for video in map(_parse_video_obj, _find_video_objs(soup)):
+                    found_videos = True
+                    new_item = scrape_item.create_child(video.permalink)
+                    tg.create_task(self.video_task(new_item, video))
+                    scrape_item.add_children()
+                    await sleep()
 
-            if found_videos:
-                continue
+                if found_videos:
+                    continue
 
-            # Fallback if we made the request with Flaresolverr. Video objects in the HTML are destroyed after JS loads
-            for new_item in self.iter_children(scrape_item, soup, "rum-video-thumbnail a"):
-                self.create_task(self.run(new_item))
-                scrape_item.add_children()
+                # Fallback if we made the request with Flaresolverr. Video objects in the HTML are destroyed after JS loads
+                for new_item in self.iter_children(scrape_item, soup, "rum-video-thumbnail a"):
+                    self.create_task(self.run(new_item))
+                    scrape_item.add_children()
+                    await sleep()
+
+    async def pager(self, url: AbsoluteHttpURL) -> AsyncGenerator[BeautifulSoup]:
+        current_page = int(url.query.get("page", 1))
+        while True:
+            soup = await self.request_soup(url)
+            yield soup
+            pagination = tuple(soup.select(self.NEXT_PAGE_SELECTOR))
+            if not pagination:
+                return
+
+            url = self.parse_url(css.attr(pagination[-1], "href"))
+            new_page = int(url.query["page"])
+            if new_page <= current_page:
+                return
+            current_page = new_page
 
     @error_handling_wrapper
     async def short(self, scrape_item: ScrapeItem, short_id: str) -> None:
@@ -236,7 +255,7 @@ class RumbleAPI(API):
         video: dict[str, Any] = await self.request_json(api_url)
 
         if video.get("live") == LiveStatus.CURRENTLY_LIVE:
-            raise ScrapeError(422, "livestreams are not supported")
+            raise ScrapeError.live_stream()
 
         thumb = max(video.get("t", ()), key=lambda t: t["w"], default=None)
         return Video(
@@ -317,7 +336,7 @@ def _parse_video_obj_formats(formats: Iterable[dict[str, Any]]) -> Generator[For
             bitrate=fmt.get("bitrate_kbps", 0),
             size=0,
             type=type_,
-            url=parse_url(fmt["url"]),
+            url=parse_http_url(fmt["url"]),
         )
 
 
@@ -341,7 +360,7 @@ def _parse_embed_formats(formats: dict[str, list[dict[str, Any]] | dict[str, dic
                 bitrate=meta.bitrate,
                 size=meta.size,
                 type=type_,
-                url=parse_url(fmt["url"]),
+                url=parse_http_url(fmt["url"]),
             )
 
 

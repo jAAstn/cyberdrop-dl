@@ -3,12 +3,14 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
+from cyberdrop_dl import aio
 from cyberdrop_dl.crawlers import Registry
-from cyberdrop_dl.crawlers.crawler import API, Crawler, SupportedDomains, SupportedPaths
+from cyberdrop_dl.crawlers._chevereto import CheveretoCrawler
+from cyberdrop_dl.crawlers.crawler import API, Crawler, SupportedDomains, SupportedPaths, auto_task_id
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils import parse_url
 from cyberdrop_dl.utils.dataclass import deserialize
 from cyberdrop_dl.utils.errors import error_handling_wrapper
+from cyberdrop_dl.utils.urls import parse_http_url
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Mapping
@@ -59,7 +61,7 @@ class GoonBoxCrawler(Crawler):
     def transform_url(cls, url: AbsoluteHttpURL) -> AbsoluteHttpURL:
         url = super().transform_url(url)
         if cls.is_subdomain(url):
-            return _fix_cdn(_thumb_to_src(url))
+            return _fix_cdn(CheveretoCrawler.thumb_to_src(url))
 
         match url.parts[1:]:
             case ["a" | "img" as part, slug, *_]:
@@ -110,43 +112,47 @@ class GoonBoxCrawler(Crawler):
     @error_handling_wrapper
     async def user_albums(self, scrape_item: ScrapeItem, user: str) -> None:
         scrape_item.setup_as_profile(self.create_title(f"{user} [user]"))
-
+        sleep = aio.periodic_sleep(10)
         async for albums in self.api.user_albums(user, scrape_item.url.query):
-            async with self.new_task_group() as tg:
+            async with aio.non_cancelling_taskgroup() as tg:
                 for album in albums:
-                    url = self.PRIMARY_URL / "a" / album.encoded_id
-                    new_item = scrape_item.create_child(url)
-                    tg.create_lazy_task(self._album(new_item, album))
+                    new_item = scrape_item.create_child(self.PRIMARY_URL / "a" / album.encoded_id)
+                    tg.create_lazy_task(self._album_task(new_item, album))
                     scrape_item.add_children()
+                    await sleep()
 
     @error_handling_wrapper
     async def user_images(self, scrape_item: ScrapeItem, user: str) -> None:
         scrape_item.setup_as_profile(self.create_title(f"{user} [user]"))
         scrape_item.append_folders("images")
+        sleep = aio.periodic_sleep(10)
 
-        async for images in self.api.user_images(user, scrape_item.url.query):
-            for img in images:
-                url = self.PRIMARY_URL / "img" / img.encoded_id
-                new_item = scrape_item.create_child(url)
-                self.create_eager_task(self._image(new_item, img))
-                scrape_item.add_children()
+        async with aio.non_cancelling_taskgroup() as tg:
+            async for images in self.api.user_images(user, scrape_item.url.query):
+                for img in images:
+                    new_item = scrape_item.create_child(self.PRIMARY_URL / "img" / img.encoded_id)
+                    tg.create_task(self._image(new_item, img))
+                    scrape_item.add_children()
+                    await sleep()
 
-    @error_handling_wrapper
     async def _album(self, scrape_item: ScrapeItem, album: Album) -> None:
         title = self.create_title(album.title, album.encoded_id)
         scrape_item.setup_as_album(title, album_id=album.encoded_id)
-
         downloaded = await self.get_completed_by_album(album.encoded_id)
+        sleep = aio.periodic_sleep(10)
 
-        async for images in self.api.album_images(album.encoded_id, scrape_item.url.query):
-            for img in images:
-                if img.src in downloaded:
-                    continue
+        async with aio.non_cancelling_taskgroup() as tg:
+            async for images in self.api.album_images(album.encoded_id, scrape_item.url.query):
+                for img in images:
+                    if img.src in downloaded:
+                        continue
 
-                url = self.PRIMARY_URL / "img" / img.encoded_id
-                new_item = scrape_item.create_child(url)
-                self.create_eager_task(self._image(new_item, img))
-                scrape_item.add_children()
+                    new_item = scrape_item.create_child(self.PRIMARY_URL / "img" / img.encoded_id)
+                    tg.create_task(self._image(new_item, img))
+                    scrape_item.add_children()
+                    await sleep()
+
+    _album_task = auto_task_id(error_handling_wrapper(_album))
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -159,7 +165,7 @@ class Image:
 
     @classmethod
     def parse(cls, img: dict[str, Any]) -> Self:
-        return deserialize(cls, img, src=parse_url(img["original_url"]))
+        return deserialize(cls, img, src=parse_http_url(img["original_url"]))
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -228,10 +234,3 @@ def _fix_cdn(url: AbsoluteHttpURL) -> AbsoluteHttpURL:
 
 def _id(slug: str) -> str:
     return slug.rsplit(".", maxsplit=1)[-1]
-
-
-def _thumb_to_src(url: AbsoluteHttpURL) -> AbsoluteHttpURL:
-    new_name = url.name
-    for trash in (".md.", ".th.", ".fr."):
-        new_name = new_name.replace(trash, ".", 1)
-    return url.with_name(new_name)

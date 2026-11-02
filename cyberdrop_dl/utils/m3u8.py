@@ -4,17 +4,18 @@ import dataclasses
 import datetime as dt
 import logging
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, final
 
 import m3u8.model
 from m3u8 import M3U8 as _M3U8
 from m3u8 import Media, Playlist
+from m3u8.mixins import BasePathMixin, GroupedBasePathMixin
 
-from cyberdrop_dl.exceptions import DownloadError
+from cyberdrop_dl.exceptions import DownloadError, ScrapeError
 from cyberdrop_dl.mediaprops import Codecs, Resolution
-from cyberdrop_dl.signature import simple_repr
-from cyberdrop_dl.utils import parse_url
+from cyberdrop_dl.signature import dataclass_repr, vars_repr
 from cyberdrop_dl.utils.dataclass import DictDataclass
+from cyberdrop_dl.utils.urls import parse_http_url
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Iterator, Mapping
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
     from cyberdrop_dl.url_objects import AbsoluteHttpURL
 
 logger = logging.getLogger(__name__)
+
+
+BasePathMixin.__repr__ = GroupedBasePathMixin.__repr__ = vars_repr
 
 
 class MediaType(StrEnum):
@@ -89,6 +93,7 @@ class Rendition:
         yield from (self.video, self.audio, self.subtitle)
 
 
+@final
 @dataclasses.dataclass(frozen=True, slots=True, order=True)
 class StreamInfo:
     """Exactly the same as m3u8.model.StreamInfo but as a dataclass, to support sorting rendition groups with the same resolution but different bitrates (bandwidth)"""
@@ -116,8 +121,8 @@ class StreamInfo:
 @dataclasses.dataclass(frozen=True, slots=True, order=True)
 class RenditionDetails:
     resolution: Resolution
-    codecs: Codecs
     stream_info: StreamInfo
+    codecs: Codecs
     media: MediaList
     urls: MediaURLs
 
@@ -129,14 +134,14 @@ class RenditionDetails:
         assert playlist.uri
 
         def get_url(m3u8_obj: Playlist | Media) -> AbsoluteHttpURL:
-            return parse_url(m3u8_obj.absolute_uri, trim=False)
+            return parse_http_url(m3u8_obj.absolute_uri, trim=False)
 
         video_url = get_url(playlist)
         subtitle_url = audio_url = None
 
         stream_info = StreamInfo(**vars(playlist.stream_info))
         resolution = _parse_stream_resolution(stream_info, video_url)
-        codecs = Codecs.parse(playlist.stream_info.codecs)
+        codecs = Codecs.parse(playlist.stream_info.codecs or "")
         media = MediaList(playlist.media)
 
         if audio_group_id := playlist.stream_info.audio:
@@ -149,7 +154,7 @@ class RenditionDetails:
 
         media_urls = MediaURLs(video_url, audio_url, subtitle_url)
 
-        return RenditionDetails(resolution, codecs, stream_info, media, media_urls)
+        return RenditionDetails(resolution, stream_info, codecs, media, media_urls)
 
 
 def _parse_stream_resolution(stream_info: StreamInfo, video_url: AbsoluteHttpURL) -> Resolution:
@@ -186,14 +191,19 @@ class HLSKey:
             raise RuntimeError("Another key is already set")
 
     @classmethod
-    def parse(cls, seg: m3u8.model.Segment | m3u8.model.InitializationSection) -> Self | None:
+    def parse(cls, seg: m3u8.model.Segment | m3u8.model.InitializationSection, idx: int) -> Self | None:
         if isinstance(seg, m3u8.model.Segment) and seg.key and seg.key.method and seg.key.method != "NONE":
-            assert seg.key.iv
             assert seg.key.uri
+            if seg.key.iv:
+                iv = bytes.fromhex(seg.key.iv.removeprefix("0x"))
+            else:
+                media_sequence = seg.media_sequence if seg.media_sequence is not None else idx
+                iv = media_sequence.to_bytes(16, "big")
+
             return cls(
                 method=Encryption(seg.key.method),
-                iv=bytes.fromhex(seg.key.iv.removeprefix("0x")),
-                uri=parse_url(seg.key.uri, trim=False),
+                iv=iv,
+                uri=parse_http_url(seg.key.absolute_uri, trim=False),
             )
 
 
@@ -207,13 +217,18 @@ def _validate_keys(stream: M3U8) -> None:
             raise DownloadError(
                 "Encrypted", f"M3U8 playlist {stream.source} has an unsupported encryption algorithm: \n{key!s}"
             )
-        if not key.iv or not key.uri:
+        if not key.uri:
             raise DownloadError(
                 "Encrypted",
-                f"M3U8 playlist {stream.source} is encrypted but we have no IV to decrypted it: \n{key!s}",
+                f"M3U8 playlist {stream.source} is encrypted but we have no URI to fetch to decrypted it: \n{key!s}",
             )
 
 
+def is_live_stream(m3u8: _M3U8) -> bool:
+    return not (m3u8.is_variant or m3u8.is_endlist)
+
+
+@dataclass_repr("media_type", "base_uri", "is_variant", "source")
 class M3U8(_M3U8):
     def __init__(
         self,
@@ -228,12 +243,12 @@ class M3U8(_M3U8):
         self.source: AbsoluteHttpURL | Path | None = source
         super().__init__(content, base_uri=str(base_uri) if base_uri else None)
         _validate_keys(self)
+        if is_live_stream(self):
+            raise ScrapeError.live_stream(source)
 
     @property
     def total_segments(self) -> int:
         return len(self.segment_map) + len(self.segments)
-
-    __repr__ = simple_repr("media_type", "base_uri", "is_variant", "source")
 
     @property
     def total_duration(self) -> dt.timedelta:
@@ -273,8 +288,10 @@ class VariantM3U8Parser:
         if isinstance(only, str):
             only = (only,)
 
+        only = tuple(map(Codecs.pretty_name, only))
+        exclude = tuple(map(Codecs.pretty_name, exclude))
         for group in self.groups:
-            if codec := group.codecs.video:
+            if codec := Codecs.pretty_name(group.codecs.video or ""):
                 if only and codec not in only:
                     continue
                 if codec in exclude:
@@ -294,7 +311,7 @@ def select_best_rendition(
 
 def get_resolution_from_url(url: AbsoluteHttpURL | str) -> Resolution:
     if isinstance(url, str):
-        url = parse_url(url, trim=False)  # Raises Invalid URL error for relative URLs
+        url = parse_http_url(url, trim=False)  # Raises Invalid URL error for relative URLs
 
     try:
         return Resolution.parse(url)

@@ -56,7 +56,7 @@ See: <https://script-ware.gitbook.io/cyberdrop-dl/reference/config/crawlers#disa
 
 ## Supported sites
 
-List of sites supported by cyberdrop-dl-patched as of version 10.11.0
+List of sites supported by cyberdrop-dl-patched as of version 10.15.0
 
 ### 1fichier
 
@@ -145,7 +145,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -204,6 +204,49 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 - Video:
   - `/watch/<video_id>`
+
+### Archve
+
+**Primary URL**: [https://archve.xyz](https://archve.xyz)
+
+**Supported Domains**: `archve.*`
+
+**Supported Paths**:
+
+- Album:
+  - `/albums/<album_id>`
+- User albums:
+  - `/u/<user_id>/albums`
+- User videos:
+  - `/u/<user_id>`
+- Video:
+  - `/d/<video_uuid>`
+  - `/e/<video_uuid>`
+  - `/watch/<video_uuid>`
+
+### Area51
+
+**Primary URL**: [https://area51.porn](https://area51.porn)
+
+**Supported Domains**: `area51.porn`
+
+**Supported Paths**:
+
+- Video:
+  - `/view/<video_id>/...`
+
+### Arte.tv
+
+**Primary URL**: [https://www.arte.tv](https://www.arte.tv)
+
+**Supported Domains**: `arte.tv`
+
+**Supported Paths**:
+
+- Playlist:
+  - `/<lang>/videos/RC-<id>/...`
+- Video:
+  - `/<lang>/videos/<id>/...`
 
 ### aShemaleTube
 
@@ -265,7 +308,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -287,6 +330,21 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/<post_slug>/`
 - Tag:
   - `/tag/<tag_slug>`
+
+### Betterome
+
+**Primary URL**: [https://betterome.com](https://betterome.com)
+
+**Supported Domains**: `betterome.*`
+
+**Supported Paths**:
+
+- Album:
+  - `/album/<album_id>/...`
+- Profile:
+  - `/u/<name>`
+- Search:
+  - `/search?q=<query>`
 
 ### BlueSky
 
@@ -346,6 +404,18 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 - Search:
   - `/?search=<query>`
+
+### BunnyCDN
+
+**Primary URL**: [https://iframe.mediadelivery.net](https://iframe.mediadelivery.net)
+
+**Supported Domains**: `iframe.mediadelivery.net`, `player.mediadelivery.net`, `video.bunnycdn.com`
+
+**Supported Paths**:
+
+- Video:
+  - `/embed/<lib_id>/<video_uuid>`
+  - `/play/<lib_id>/<video_uuid>`
 
 ### BuzzHeavier
 
@@ -411,7 +481,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -632,8 +702,12 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Supported Paths**:
 
+- Folder:
+  - `/f/<folder_id>`
 - Video:
+  - `/d/<video_id>`
   - `/e/<video_id>`
+  - `/v/<video_id>`
 
 ### Dropbox
 
@@ -787,7 +861,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -810,19 +884,21 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Primary URL**: [https://fileditchfiles.me](https://fileditchfiles.me)
 
-**Supported Domains**: `fileditch.*`, `theditch.st`
+**Supported Domains**: `embedditch.st`, `fileditch.*`, `fileditchfiles.me`, `fileditchhot.st`, `theditch.st`
 
 **Supported Paths**:
 
-- File:
+- File / Embed:
   - `/alpha7/<file_id>/<name>`
   - `/beta123/<file_id>/<name>`
   - `/file.php?f=<file_id>`
   - `/temp/<file_id>/<name>`
+- Hotlink:
+  - `https://fileditchhot.st/<path>...`
 - Short URL:
   - `https://theditch.st/<short_id>`
 
-### Fileditch
+### FileditchAlbums
 
 **Primary URL**: [https://fileditchalbums.st](https://fileditchalbums.st)
 
@@ -845,6 +921,23 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/d/<slug>`
 - Folder:
   - `/f/<slug>`
+
+### Findr.to
+
+**Primary URL**: [https://findr.to](https://findr.to)
+
+**Supported Domains**: `findr.to`
+
+**Supported Paths**:
+
+- Album:
+  - `/albums/<album_id>`
+- Search albums:
+  - `/api/albums/search?q=<query>`
+  - `/search?q=<query>`
+- Search files:
+  - `/api/search?q=<query>`
+  - `/search?q=<query>&view=files`
 
 ### Firestream
 
@@ -1007,7 +1100,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Primary URL**: [https://gofile.io](https://gofile.io)
 
-**Supported Domains**: `gofile.*`
+**Supported Domains**: `gofile.io`
 
 **Supported Paths**:
 
@@ -1112,9 +1205,9 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 ### GUpload
 
-**Primary URL**: [https://gupload.xyz](https://gupload.xyz)
+**Primary URL**: [https://gupload.site](https://gupload.site)
 
-**Supported Domains**: `gupload.*`
+**Supported Domains**: `gupload.site`, `gupload.xyz`
 
 **Supported Paths**:
 
@@ -1193,8 +1286,16 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Supported Paths**:
 
-- Model:
+- Model photos:
+  - `/<model_id>/photo`
+- Model shorts:
+  - `/<model_id>/short`
+- Model videos:
   - `/<model_id>`
+- Photo:
+  - `/<model_id>/photo/<short_id>`
+- Short:
+  - `/<model_id>/short/<short_id>`
 - Video:
   - `/<model_id>/video/<video_id>`
 
@@ -1332,10 +1433,11 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 **Supported Paths**:
 
 - Album:
-  - `/g/...`
-- Direct Links:
+  - `/g/<gallery_id>`
 - Image:
-  - `/...`
+  - `/<img_id>`
+  - `images.imgbox.com/../../<img_id>.<ext>`
+  - `thumbs.imgbox.com/../../<img_id>.<ext>`
 
 ### ImgLike
 
@@ -1456,7 +1558,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -1470,10 +1572,35 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Supported Paths**:
 
-- Model:
+- Model photos:
+  - `/<model_id>/photo`
+- Model shorts:
+  - `/<model_id>/short`
+- Model videos:
   - `/<model_id>`
+- Photo:
+  - `/<model_id>/photo/<short_id>`
+- Short:
+  - `/<model_id>/short/<short_id>`
 - Video:
   - `/<model_id>/video/<video_id>`
+
+### Lensdump
+
+**Primary URL**: [https://lensdump.com](https://lensdump.com)
+
+**Supported Domains**: `.l3n.co`, `lensdump.com`
+
+**Supported Paths**:
+
+- Album:
+  - `/a/<album_id>`
+- Direct Links:
+  - `https://<server>.l3n.co/.../<image_id>.<ext>`
+- Image:
+  - `/i/<image_id>`
+- User albums:
+  - `/<username>`
 
 ### LiveCamRips
 
@@ -1517,7 +1644,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Primary URL**: [https://lulustream.com](https://lulustream.com)
 
-**Supported Domains**: `cdn1.site`, `lulu.st`, `lulustream.*`, `luluvdo.com`, `luluvdoo.com`, `luluvid.com`, `streamhihi.com`
+**Supported Domains**: `cdn1.site`, `lulu.st`, `lulustream.*`, `luluvd.*`, `luluvdo.*`, `luluvdoo.com`, `luluvid.*`, `luluvid.com`, `luluvido.*`, `streamhihi.com`
 
 **Supported Paths**:
 
@@ -1655,13 +1782,17 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Primary URL**: [https://mixdrop.sb](https://mixdrop.sb)
 
-**Supported Domains**: `m1xdrop.*`, `mixdrop.*`, `mxdrop.*`
+**Supported Domains**: `m1xdrop.*`, `miixdrop.*`, `mixdrop.*`, `mxdrop.*`
 
 **Supported Paths**:
 
 - File:
   - `/e/<file_id>`
   - `/f/<file_id>`
+
+**Notes**
+
+- Only video files are supported
 
 ### Monstercat
 
@@ -1739,7 +1870,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Primary URL**: [https://noodlemagazine.com](https://noodlemagazine.com)
 
-**Supported Domains**: `noodlemagazine.*`
+**Supported Domains**: `exporntoons.net`, `mat6tube.com`, `noodlemagazine.com`
 
 **Supported Paths**:
 
@@ -1811,7 +1942,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -1825,8 +1956,10 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Supported Paths**:
 
+- Image:
+  - `/models/<name>/<img_id>`
 - Model:
-  - `/models/...`
+  - `/models/<name>`
 
 ### OctaveMusic
 
@@ -1954,13 +2087,40 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Primary URL**: [https://www.patreon.com](https://www.patreon.com)
 
-**Supported Domains**: `patreon.*`
+**Supported Domains**: `patreon.*`, `patreonusercontent.com`, `stream.mux.com`
 
 **Supported Paths**:
 
+- Collection:
+  - `/collection/<collection_id>`
 - Creator:
   - `/<creator>`
   - `/cw/<creator>`
+- Direct Media:
+  - `.patreonusercontent.com/...`
+  - `/media-u/v3/<media_id>`
+  - `stream.mux.com/...`
+- Post:
+  - `/<creator>/posts/<slug>-<post-id>`
+  - `/posts/<slug>-<post-id>`
+
+### PatreonGeneric
+
+**Primary URL**: [::GENERIC CRAWLER::](::GENERIC CRAWLER::)
+
+**Supported Domains**:
+
+**Supported Paths**:
+
+- Collection:
+  - `/collection/<collection_id>`
+- Creator:
+  - `/<creator>`
+  - `/cw/<creator>`
+- Direct Media:
+  - `.patreonusercontent.com/...`
+  - `/media-u/v3/<media_id>`
+  - `stream.mux.com/...`
 - Post:
   - `/<creator>/posts/<slug>-<post-id>`
   - `/posts/<slug>-<post-id>`
@@ -2041,6 +2201,19 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/w/<short_uuid>`
   - `/w/<video_uuid>`
 
+### Picdrop
+
+**Primary URL**: [https://www.picdrop.com](https://www.picdrop.com)
+
+**Supported Domains**: `picdrop.*`
+
+**Supported Paths**:
+
+- File:
+  - `/<user>/<gallery_id>?file=<file_key>`
+- Gallery:
+  - `/<user>/<gallery_id>`
+
 ### PillowCase
 
 **Primary URL**: [https://pillows.su](https://pillows.su)
@@ -2103,6 +2276,31 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/pin/<pin_id>`
 - User Boards:
   - `/<user>`
+
+### Pixabay
+
+**Primary URL**: [https://pixabay.com](https://pixabay.com)
+
+**Supported Domains**: `pixabay.*`
+
+**Supported Paths**:
+
+- 3D models:
+  - `/3d-models/<slug>-<id>`
+- GIFs:
+  - `/gifs/<slug>-<id>`
+- Illustrations:
+  - `/illustrations/<slug>-<id>`
+- Music:
+  - `/music/<slug>-<id>`
+- Photos:
+  - `/photos/<slug>-<id>`
+- Sound-effects:
+  - `/sound-effects/<slug>-<id>`
+- Vectors:
+  - `/vectors/<slug>-<id>`
+- Videos:
+  - `/videos/<slug>-<id>`
 
 ### PixelDrain
 
@@ -2335,6 +2533,21 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Image:
   - `/<image_id>/...`
 
+### Ppp.porn
+
+**Primary URL**: [https://ppp.porn](https://ppp.porn)
+
+**Supported Domains**: `ppp.porn`
+
+**Supported Paths**:
+
+- Model:
+  - `/s/<id>/`
+- Search:
+  - `/search/<query>/`
+- Video:
+  - `/v/<video_id>/`
+
 ### RealBooru
 
 **Primary URL**: [https://realbooru.com](https://realbooru.com)
@@ -2395,18 +2608,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/user/<user>`
   - `/user/<user>/submitted`
 
-### Reddit
-
-**Primary URL**: [https://v.redd.it](https://v.redd.it)
-
-**Supported Domains**: `v.redd.it`
-
-**Supported Paths**:
-
-- Video:
-  - `v.redd.it/<video_id>`
-
-### Reddit
+### RedditImages
 
 **Primary URL**: [https://i.redd.it](https://i.redd.it)
 
@@ -2416,6 +2618,17 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 - Image:
   - `i.redd.it/<id>.>ext>`
+
+### RedditVideos
+
+**Primary URL**: [https://v.redd.it](https://v.redd.it)
+
+**Supported Domains**: `packaged-media.redd.it`, `v.redd.it`
+
+**Supported Paths**:
+
+- Video:
+  - `v.redd.it/<video_id>`
 
 ### RedGifs
 
@@ -2561,6 +2774,17 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/play/embed/<id>`
   - `/video/<id>`
 
+### S9e.github.io
+
+**Primary URL**: [https://s9e.github.io](https://s9e.github.io)
+
+**Supported Domains**: `s9e.github.io`
+
+**Supported Paths**:
+
+- Embed:
+  - `/iframe/2/<name>.html#<id>`
+
 ### Scrolller
 
 **Primary URL**: [https://scrolller.com](https://scrolller.com)
@@ -2590,11 +2814,12 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 **Supported Paths**:
 
-- Direct Links:
+- Direct links:
+  - `https://videos<x>.sendvid.com/...`
 - Embeds:
-  - `/embed/...`
+  - `/embed/<video_id>`
 - Videos:
-  - `/...`
+  - `/<video_id>`
 
 ### Sex.com
 
@@ -2606,6 +2831,40 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 - Shorts Profiles:
   - `/shorts/<profile>`
+
+### SimpCity
+
+**Primary URL**: [https://simpcity.cr](https://simpcity.cr)
+
+**Supported Domains**: `simpcity.cr`, `simpcity.su`
+
+**Supported Paths**:
+
+- Attachments:
+  - `/attachments|data|uploads/...`
+- Threads:
+  - `/goto/<post_id>`
+  - `/posts/<post_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
+
+**Notes**
+
+- base crawler: Xenforo
+
+### Smotrim.ru
+
+**Primary URL**: [https://smotrim.ru](https://smotrim.ru)
+
+**Supported Domains**: `smotrim.ru`
+
+**Supported Paths**:
+
+- Audio:
+  - `/audio/<audio_id>`
+  - `/brand/<brand>#playing_audio=<audio_id>`
+- Video:
+  - `/brand/<brand>#playing_video=<video_id>`
+  - `/video/<video_id>`
 
 ### SocialMediaGirls
 
@@ -2620,7 +2879,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -2692,33 +2951,6 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/e/<video_id>`
   - `/v/<video_id>`
 
-### Suvobox
-
-**Primary URL**: [https://www.suvobox.com](https://www.suvobox.com)
-
-**Supported Domains**: `suvobox.*`
-
-**Supported Paths**:
-
-- Album:
-  - `/a/<album_id>`
-- Direct File:
-  - `/d/<file_id>.<ext>`
-  - `/m/<file_id>-medium.<ext>`
-- File:
-  - `/f/<file_id>`
-
-### T.co
-
-**Primary URL**: [https://t.co](https://t.co)
-
-**Supported Domains**: `t.co`
-
-**Supported Paths**:
-
-- Redirect:
-  - `t.co/<short_code>`
-
 ### TabooTube
 
 **Primary URL**: [https://www.tabootube.xxx](https://www.tabootube.xxx)
@@ -2746,6 +2978,8 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/albums/<album_name>/<image_name>`
 - Members:
   - `/members/<member_id>`
+- Members favorites:
+  - `/members/<member_id>/favourite_videos`
 - Search:
   - `/search/?q=<query>`
 - Tags:
@@ -2768,6 +3002,18 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Video:
   - `/videos/<id>/<slug>`
 
+### Tiktikstream
+
+**Primary URL**: [https://tiktikstream.com](https://tiktikstream.com)
+
+**Supported Domains**: `tiktikstream.*`
+
+**Supported Paths**:
+
+- Video:
+  - `/embed/<video_slug>`
+  - `/v/<video_slug>`
+
 ### TikTok
 
 **Primary URL**: [https://www.tiktok.com](https://www.tiktok.com)
@@ -2782,10 +3028,15 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/share/photo/<photo_id>`
 - User:
   - `/@<user>`
+  - `/@<user>?cursor=<cursor>`
 - Video:
   - `/@/video/<video_id>`
   - `/@<user>/video/<video_id>`
   - `/share/video/<video_id>`
+
+**Notes**
+
+- Use `cursor` query param to resume pagination from a previous profile scrape
 
 ### TitsInTops
 
@@ -2800,7 +3051,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -2892,6 +3143,8 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/albums/<album_name>/<image_name>`
 - Members:
   - `/members/<member_id>`
+- Members favorites:
+  - `/members/<member_id>/favourite_videos`
 - Search:
   - `/search/?q=<query>`
 - Tags:
@@ -3011,6 +3264,17 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Video:
   - `/amplify_video/<media_id>...`
 
+### TwitterShortURL
+
+**Primary URL**: [https://t.co](https://t.co)
+
+**Supported Domains**: `t.co`
+
+**Supported Paths**:
+
+- Redirect:
+  - `t.co/<short_code>`
+
 ### TWPornStars
 
 **Primary URL**: [https://www.twpornstars.com](https://www.twpornstars.com)
@@ -3037,6 +3301,19 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Video:
   - `/embed/<video_id>/...`
   - `/videos/<video_id>/...`
+
+### Upfile.top
+
+**Primary URL**: [https://upfile.top](https://upfile.top)
+
+**Supported Domains**: `upfile.top`
+
+**Supported Paths**:
+
+- Share:
+  - `/public/<path>...`
+- Share subfolder:
+  - `/public/<path>...?f=<subfolder_id>`
 
 ### Upload.ee
 
@@ -3137,6 +3414,72 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/embed/<video_id>/...`
   - `/videos/<video_id>/...`
 
+### VK
+
+**Primary URL**: [https://vk.com](https://vk.com)
+
+**Supported Domains**: `.userapi.com`, `m.vk.com`, `m.vk.ru`, `mkv.com`, `vk.cc`, `vk.com`, `vk.me`, `vk.ru`, `vkontakte.com`, `vkontakte.ru`
+
+**Supported Paths**:
+
+- Album:
+  - `/album<owner_id>_<album_id>`
+- Audio:
+  - `/audio<owner_id>_<audio_id>`
+- Audio Playlist:
+  - `/audio_playlist<owner_id>_<playlist_id>`
+- Direct images:
+  - `.userapi.com/...`
+- Photo:
+  - `/photo<owner_id>_<photo_id>`
+- Post:
+  - `/wall<owner_id>_<wall_id>`
+- Redirect:
+  - `/?to=<base64_url>`
+  - `/away.php?to=<url>`
+- User / Group clips:
+  - `/@<owner_screen_name>#section=short_videos`
+  - `/id<owner_id>#section=short_videos`
+  - `/public<owner_id>#section=short_videos`
+- User / Group videos:
+  - `/@<owner_screen_name>#section=videos`
+  - `/clips/username`
+  - `/id<owner_id>#section=videos`
+  - `/public<owner_id>#section=videos`
+  - `/videos/@username`
+  - `/videos<owner_id>`
+- User / Group wall:
+  - `/@<owner_screen_name>`
+  - `/album<owner_id>_00`
+  - `/id<owner_id>`
+  - `/public<owner_id>`
+- Video:
+  - `/clip<owner_id>_<video_id>`
+  - `/playlist/<owner_id>_<playlist_id>/video<owner_id>_<video_id>`
+  - `/video<owner_id>_<video_id>?list=<access_key>`
+  - `/video_ext.php?oid=<owner_id>&id=<video_id>`
+
+### VKVideo
+
+**Primary URL**: [https://vkvideo.ru](https://vkvideo.ru)
+
+**Supported Domains**: `vkvideo.com`, `vkvideo.ru`
+
+**Supported Paths**:
+
+- Playlist:
+  - `/playlist/<owner_id>_<playlist_id>`
+- User / Group videos:
+  - `@<owner_screen_name>`
+  - `@<owner_screen_name>/all`
+  - `@<owner_screen_name>/clips`
+  - `@<owner_screen_name>/donut`
+- Video:
+  - `/clip<owner_id>_<video_id>`
+  - `/playlist/<owner_id>_<playlist_id>/video<owner_id>_<video_id>`
+  - `/video<owner_id>_<video_id>?list=<access_key>`
+  - `/video_ext.php?oid=<owner_id>&id=<video_id>`
+
 ### Voe.sx
 
 **Primary URL**: [https://voe.sx](https://voe.sx)
@@ -3199,23 +3542,6 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/<video_id>`
   - `/download-webm/<video_id>`
   - `/play/<video_id>`
-
-### WeTransfer
-
-**Primary URL**: [https://wetransfer.com](https://wetransfer.com)
-
-**Supported Domains**: `we.tl`, `wetransfer.com`
-
-**Supported Paths**:
-
-- Direct links:
-  - `download.wetransfer.com/...`
-- Public link:
-  - `wetransfer.com/downloads/<file_id>/<security_hash>`
-- Share Link:
-  - `wetransfer.com/downloads/<file_id>/<recipient_id>/<security_hash>`
-- Short Link:
-  - `we.tl/<short_file_id>`
 
 ### Whyp.it
 
@@ -3299,6 +3625,17 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Tag:
   - `/tag/<tag_slug>`
 
+### X-minus
+
+**Primary URL**: [https://x-minus.pro](https://x-minus.pro)
+
+**Supported Domains**: `x-minus.*`
+
+**Supported Paths**:
+
+- Track:
+  - `/track/<track-id>/<name>`
+
 ### Xasiat
 
 **Primary URL**: [https://www.xasiat.com](https://www.xasiat.com)
@@ -3327,7 +3664,7 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 - Threads:
   - `/goto/<post_id>`
   - `/posts/<post_id>`
-  - `/thread|topic|tema|threads|topics|temas/<thread_name_and_id>`
+  - `/thread|topic|tema|threads|topics|temas|themen/<thread_name_and_id>`
 
 **Notes**
 
@@ -3406,6 +3743,8 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/albums/<album_name>/<image_name>`
 - Members:
   - `/members/<member_id>`
+- Members favorites:
+  - `/members/<member_id>/favourite_videos`
 - Search:
   - `/search/?q=<query>`
 - Tags:
@@ -3482,21 +3821,17 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
 
 ### YandexDisk
 
-**Primary URL**: [https://disk.yandex.com.tr](https://disk.yandex.com.tr)
+**Primary URL**: [https://disk.yandex.com](https://disk.yandex.com)
 
-**Supported Domains**: `disk.yandex`, `yadi.sk`
+**Supported Domains**: `disk.360.yandex`, `disk.yandex`, `yadi.sk`
 
 **Supported Paths**:
 
 - File:
-  - `/d/<folder_id>/<file_name>`
+  - `/d/<share_id>/<sub_path>`
   - `/i/<file_id>`
-- Folder:
-  - `/d/<folder_id>`
-
-**Notes**
-
-- Does NOT support nested folders
+- Share:
+  - `/d/<share_id>`
 
 ### YouJizz
 
@@ -3526,23 +3861,14 @@ List of sites supported by cyberdrop-dl-patched as of version 10.11.0
   - `/albums/<album_name>/<image_name>`
 - Members:
   - `/members/<member_id>`
+- Members favorites:
+  - `/members/<member_id>/favourite_videos`
 - Search:
   - `/search/?q=<query>`
 - Tags:
   - `/tags/<name>`
 - Videos:
   - `/videos/<slug>`
-
-### YTboob
-
-**Primary URL**: [https://ytboob.com](https://ytboob.com)
-
-**Supported Domains**: `ytboob.com`
-
-**Supported Paths**:
-
-- Video:
-  - `/video/<slug>`
 
 ### Yurivan
 
