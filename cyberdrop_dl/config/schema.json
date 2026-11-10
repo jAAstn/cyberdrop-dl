@@ -612,8 +612,8 @@
           "type": "string"
         },
         "sheets": {
-          "default": "xslx",
-          "enum": ["xslx", "ods", "html", "csv", "tsv"],
+          "default": "xlsx",
+          "enum": ["xlsx", "ods", "html", "csv", "tsv"],
           "title": "Sheets",
           "type": "string"
         },
@@ -1063,6 +1063,16 @@
         "content_urls": {
           "default": true,
           "title": "Content Urls",
+          "type": "boolean"
+        },
+        "video_previews": {
+          "default": false,
+          "title": "Video Previews",
+          "type": "boolean"
+        },
+        "crossposts": {
+          "default": true,
+          "title": "Crossposts",
           "type": "boolean"
         }
       },
