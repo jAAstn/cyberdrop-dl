@@ -3,8 +3,10 @@ name: Ruff
 permissions: {}
 
 on:
-  push:
   pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   lint:
