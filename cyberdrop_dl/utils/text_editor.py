@@ -35,7 +35,7 @@ def open(file_path: Path) -> None:  # noqa: A001
     if not cmd:
         if sys.platform == "win32":
             logger.info(f"Opening '{file_path}' with the OS's default editor...")
-            os.startfile(file_path)
+            os.startfile(file_path)  # noqa: S606 - Windows shell API, no subprocess spawned
             return
         msg = "No default text editor found"
         raise ValueError(msg)
