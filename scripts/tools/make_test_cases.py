@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import operator
 import subprocess
 import tempfile
 from pathlib import Path
@@ -9,8 +10,8 @@ from typing import TYPE_CHECKING, Any
 from cyclopts import App
 
 from cyberdrop_dl.__main__ import run_cdl
+from cyberdrop_dl.appdata import AppData, AppDirs
 from cyberdrop_dl.config import Config
-from cyberdrop_dl.config.appdata import AppData, AppDirs
 from cyberdrop_dl.crawlers import SKIP_DOWNLOAD
 
 if TYPE_CHECKING:
@@ -79,6 +80,7 @@ def run_test(url_txt: Path, main_log: Path) -> None:
                 "--flaresolverr-concurrency",
                 "3",
                 "--dump-json",
+                "--no-update-check",
                 "--ui",
                 "simple",
             ]
@@ -94,11 +96,12 @@ def create_test_files(file: Path) -> None:
         site_tests.setdefault(url, []).append(results)
 
     test_files: list[Path] = []
+    sort_key = operator.itemgetter("id")
     for domain, cases in all_results.items():
         test_cases = [
             {
                 "url": url,
-                "results": results,
+                "results": sorted(results, key=sort_key),
                 "count": len(results),
             }
             for url, results in cases.items()

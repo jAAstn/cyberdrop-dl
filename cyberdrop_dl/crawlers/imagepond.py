@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 from typing import TYPE_CHECKING, ClassVar, Self, final
 
 from cyberdrop_dl import aio
@@ -9,6 +8,7 @@ from cyberdrop_dl.crawlers.crawler import Crawler, URLConfig
 from cyberdrop_dl.exceptions import ScrapeError
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
 from cyberdrop_dl.utils import css, open_graph
+from cyberdrop_dl.utils.dataclass import struct
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 
 if TYPE_CHECKING:
@@ -24,18 +24,18 @@ class Selector:
     USER_FILES = "a.group.relative[href]"
     NEXT_PAGE = "a[rel=next]"
     ARCHIVE = "[x-data='archiveViewer()']"
-    DIRECT_DL = "#embed-direct"
+    DOWNLOAD_BTN = ".ip-block-media-info a:-soup-contains(Download)"
     EMBED = ".embed-link a[href]"
     EXPIRED = "h1:-soup-contains-own('Content Expired')"
 
 
-@dataclasses.dataclass(slots=True)
+@struct
 class File:
     name: str
     mime: str | None
     uploaded_at: str
     assume_ext: str
-    source: str
+    source: AbsoluteHttpURL | str
     is_archive: bool
 
     @classmethod
@@ -45,7 +45,10 @@ class File:
         is_archive = bool(soup.select_one(Selector.ARCHIVE))
 
         if is_archive:
-            assume_ext, source = ".zip", css.select(soup, Selector.DIRECT_DL, "value")
+            assume_ext, source = (
+                ".zip",
+                ImagePondCrawler.parse_url(css.select(soup, Selector.DOWNLOAD_BTN, "href")) / "file",
+            )
         elif og.video:
             assume_ext, mimetype, source = ".mp4", og.video_type, og.video
         else:
@@ -153,7 +156,7 @@ class ImagePondCrawler(Crawler):
 
     @error_handling_wrapper
     async def album(self, scrape_item: ScrapeItem) -> None:
-        soup, pages = await aio.peek_first(self.web_pager(scrape_item.url))
+        soup, pages = await aio.peek_next(self.web_pager(scrape_item.url))
         title = css.select_text(soup, "h1")
         scrape_item.setup_as_album(self.create_title(title), album_id=scrape_item.url.name)
 

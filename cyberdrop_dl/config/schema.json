@@ -62,6 +62,9 @@
         },
         "real_debrid": {
           "$ref": "#/$defs/ApiKeyAuth"
+        },
+        "tinglr": {
+          "$ref": "#/$defs/ApiKeyAuth"
         }
       },
       "title": "Authentication",
@@ -191,7 +194,8 @@
           "$ref": "#/$defs/BlueSkyConfig"
         },
         "clonr": {
-          "$ref": "#/$defs/ClonrConfig"
+          "$ref": "#/$defs/ClonrConfig",
+          "deprecated": true
         },
         "clypit": {
           "$ref": "#/$defs/ClypitConfig"
@@ -1065,14 +1069,14 @@
           "title": "Content Urls",
           "type": "boolean"
         },
-        "video_previews": {
-          "default": false,
-          "title": "Video Previews",
-          "type": "boolean"
-        },
         "crossposts": {
           "default": true,
           "title": "Crossposts",
+          "type": "boolean"
+        },
+        "video_previews": {
+          "default": false,
+          "title": "Video Previews",
           "type": "boolean"
         }
       },
