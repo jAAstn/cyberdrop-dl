@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import datetime
+import sqlite3
+from typing import TYPE_CHECKING, cast
 from pathlib import Path
 
 import pytest
@@ -10,10 +14,12 @@ from cyberdrop_dl.constants import USE_RETRY_PATH
 from cyberdrop_dl.crawlers.crawler import _prepare_download_path
 from cyberdrop_dl.database import Database, common, schema
 from cyberdrop_dl.exceptions import DatabaseError
-from cyberdrop_dl.scrape_source import _create_item_from_row
+from cyberdrop_dl.scrape_mapper import _create_item_from_row
 from cyberdrop_dl.url_objects import AbsoluteHttpURL, RetryInfo, ScrapeItem
-from cyberdrop_dl.utils import enter_context
-from cyberdrop_dl.utils.urls import parse_http_url
+from cyberdrop_dl.utils import dates, enter_context, parse_http_url
+
+if TYPE_CHECKING:
+    import aiosqlite
 
 _MOCK_ROW = {
     "referer": "https://drive.google.com/file/d/1F0YBsnQRvrMbK0p9UlnyLu88kqQ0j_F6/edit",
@@ -28,6 +34,118 @@ def item() -> ScrapeItem:
     return ScrapeItem(url=AbsoluteHttpURL("https://drive.google.com"))
 
 
+@pytest.fixture
+def row() -> aiosqlite.Row:
+    return cast("aiosqlite.Row", _MOCK_ROW.copy())  # pyright: ignore[reportInvalidCast]
+
+
+@pytest.fixture
+def row_with_dates(row) -> aiosqlite.Row:
+    row["completed_at"] = dates.now_utc().isoformat()
+    row["created_at"] = datetime.datetime(2023, 1, 1, 10, 0, 0, 0, tzinfo=datetime.UTC).isoformat()
+    return row
+
+
+def test_scrape_item_creation(row: aiosqlite.Row) -> None:
+    item = _create_item_from_row(row)
+    assert isinstance(item, ScrapeItem)
+    assert item.url == AbsoluteHttpURL("https://drive.google.com/file/d/1F0YBsnQRvrMbK0p9UlnyLu88kqQ0j_F6/edit")
+    assert item.retry_path == Path("/cdl/downloads")
+    assert item.part_of_album is True
+    assert item.completed_at is None
+    assert item.created_at is None
+
+
+def test_item_with_completed_at(row_with_dates) -> None:
+    completed_at_str = row_with_dates["completed_at"]
+    row_with_dates["created_at"] = None
+
+    item = _create_item_from_row(row_with_dates)
+    expected_timestamp = int(dates.parse_iso(completed_at_str).timestamp())
+    assert item.completed_at == expected_timestamp
+    assert item.created_at is None
+
+
+def test_item_with_created_at(row) -> None:
+    now = dates.now_utc()
+    row["created_at"] = now.isoformat()
+
+    item = _create_item_from_row(row)
+    assert item.created_at == int(now.timestamp())
+    assert item.completed_at is None
+
+
+def test_item_with_both_dates(row_with_dates) -> None:
+    completed_at_str = row_with_dates["completed_at"]
+    created_at_str = row_with_dates["created_at"]
+
+    item = _create_item_from_row(row_with_dates)
+    expected_completed_timestamp = int(dates.parse_iso(completed_at_str).timestamp())
+    expected_created_timestamp = int(dates.parse_iso(created_at_str).timestamp())
+    assert item.completed_at == expected_completed_timestamp
+    assert item.created_at == expected_created_timestamp
+
+
+def test_missing_download_path(row) -> None:
+    del row["download_path"]
+
+    with pytest.raises(KeyError, match="download_path"):
+        _create_item_from_row(row)
+
+
+def test_invalid_date_format(row) -> None:
+    row["completed_at"] = "invalid date"
+
+    with pytest.raises(ValueError):
+        _create_item_from_row(row)
+
+
+async def test_automatic_database_migration_transfers_files(tmp_path: Path) -> None:
+    db_path = tmp_path / "database.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE media (
+                domain TEXT,
+                url_path TEXT,
+                referer TEXT,
+                album_id TEXT,
+                download_path TEXT,
+                download_filename TEXT,
+                original_filename TEXT,
+                completed INTEGER NOT NULL,
+                created_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                PRIMARY KEY (domain, url_path, original_filename)
+            );
+            CREATE TABLE temp (value TEXT);
+            INSERT INTO media (
+                domain, url_path, referer, download_path, download_filename,
+                original_filename, completed, created_at
+            ) VALUES (
+                'example', '/file', 'https://example.com',
+                '/downloads', 'file.bin', 'original.bin', 1,
+                '2026-01-02 03:04:05'
+            );
+            """
+        )
+
+    async with Database(db_path, ignore_history=False) as database:
+        files = await database.fetchall("SELECT * FROM files")
+        temp = await database.fetchone("SELECT name FROM sqlite_master WHERE name = 'temp'")
+
+    assert len(files) == 1
+    assert tuple(files[0]) == (
+        "/downloads",
+        "file.bin",
+        "original.bin",
+        None,
+        "https://example.com",
+        1767323045,
+    )
+    assert temp is None
+    backups = await asyncio.to_thread(lambda: list(tmp_path.glob("database_*_*.backup.db")))
+    assert len(backups) == 1
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
