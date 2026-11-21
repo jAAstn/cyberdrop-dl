@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 import time
 import warnings
@@ -13,8 +14,8 @@ from cyclopts.exceptions import UnknownOptionError
 from pydantic import BaseModel
 
 import cyberdrop_dl.commands.scrape
+from cyberdrop_dl.appdata import AppData
 from cyberdrop_dl.config import Config, Files, _resolve_paths, settings
-from cyberdrop_dl.config.appdata import AppData
 from cyberdrop_dl.config.auth import Authentication, Notifications
 from cyberdrop_dl.config.filters import Filters, _FileFilter
 from cyberdrop_dl.exceptions import CDLConfigRuntimeErrorsGroup
@@ -418,7 +419,7 @@ def test_merge_does_not_warn_about_untouched_deprecated_options(
 
     _warned.clear()
     start = time.monotonic()
-    with caplog.at_level("WARNING", logger="cyberdrop_dl.models"):
+    with caplog.at_level(logging.WARNING, logger="cyberdrop_dl.models"):
         _ = Config() | Config.parse_args(["--download-folder", "downloads"])
 
     assert "deprecated" not in caplog.text
@@ -431,10 +432,29 @@ def test_deprecated_option_set_by_the_user_still_warns(
     from cyberdrop_dl.models import _warned
 
     _warned.clear()
-    with caplog.at_level("WARNING", logger="cyberdrop_dl.models"):
+    with caplog.at_level(logging.WARNING, logger="cyberdrop_dl.models"):
         config = Config.load({"network": {"ssl_context": "certifi"}})
 
     assert "'ssl_context' config option is deprecated" in caplog.text
     with warnings.catch_warnings(action="ignore"):
         assert config.network.ssl_context == "certifi"
-        assert (config | Config.parse_args([])).network.ssl_context == "certifi"
+
+
+def test_deprecated_options_are_ignored_while_serializing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from cyberdrop_dl.models import _warned
+
+    _warned.clear()
+    new_value = "certifi"
+    default = "truststore+certifi"
+    assert default != new_value
+    with caplog.at_level(logging.WARNING, logger="cyberdrop_dl.models"):
+        config = Config.load({"network": {"ssl_context": new_value}})
+
+    assert "'ssl_context' config option is deprecated" in caplog.text
+
+    with warnings.catch_warnings(action="ignore"):
+        assert config.network.ssl_context == "certifi"
+        assert Config.load(config.model_dump(mode="json")).network.ssl_context == default
+        assert (config | Config.parse_args([])).network.ssl_context == default

@@ -1,88 +1,67 @@
 from __future__ import annotations
 
-import itertools
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from cyberdrop_dl.clients.http import HTTPConfig
 from cyberdrop_dl.constants import CDL_USER_AGENT
-from cyberdrop_dl.crawlers.crawler import Crawler, SupportedPaths
+from cyberdrop_dl.crawlers.danbooru import DanBooruGenericCrawler
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
-from cyberdrop_dl.utils.errors import error_handling_wrapper
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from cyberdrop_dl.url_objects import ScrapeItem
+    from cyberdrop_dl.crawlers.crawler import SupportedPaths
 
 
-@HTTPConfig(rate_limit=(2, 1))
-@HTTPConfig.default_headers(user_agent=f"{CDL_USER_AGENT} (by B05FDD249DF29ED3)")
-class E621Crawler(Crawler):
-    SUPPORTED_PATHS: ClassVar[SupportedPaths] = {
-        "Post": "/posts/<post_id>",
-        "Tags": "/posts?tags=<tags>",
-        "Pools": "/pools/<pool_id>",
+@HTTPConfig(headers={"User-Agent": f"{CDL_USER_AGENT} (by B05FDD249DF29ED3)"})
+class E621Crawler(DanBooruGenericCrawler):
+    SUPPORTED_PATHS: ClassVar[SupportedPaths] = DanBooruGenericCrawler.SUPPORTED_PATHS | {
+        "Post": ("/post/<post_id>",),
+        "Pools": ("/pool/<pool_id>",),
     }
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://e621.net")
     DOMAIN: ClassVar[str] = "e621.net"
     FOLDER_DOMAIN: ClassVar[str] = "E621"
+    CDN: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://static1.e621.net")
 
-    async def fetch(self, scrape_item: ScrapeItem) -> None:
 
-        match scrape_item.url.parts[1:]:
-            case ["posts"] if tags := scrape_item.url.query.get("tags"):
-                await self.tags(scrape_item, tags)
-            case ["posts", post_id]:
-                await self.post(scrape_item, post_id)
-            case ["pools", pool_id]:
-                await self.pool(scrape_item, pool_id)
-            case _:
-                raise ValueError
+class BlepArtCrawler(DanBooruGenericCrawler):
+    SUPPORTED_PATHS: ClassVar[SupportedPaths] = DanBooruGenericCrawler.SUPPORTED_PATHS | {
+        "Post": "/posts/<post_id>",
+        "Pools": "/pools/<pool_id>",
+    }
+    PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://blep.art")
+    DOMAIN: ClassVar[str] = "blep.art"
+    FOLDER_DOMAIN: ClassVar[str] = "BlepArt"
+    CDN: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://cdn.blep.art")
 
-    async def _pager(self, scrape_item: ScrapeItem) -> AsyncGenerator[list[dict[str, Any]]]:
-        initial_page = int(scrape_item.url.query.get("page", 1))
-        url = (self.PRIMARY_URL / "posts.json").with_query(tags=scrape_item.url.query["tags"])
-        for page in itertools.count(initial_page):
-            resp: dict[str, Any] = await self.request_json(url.update_query(page=page))
-            posts = resp.get("posts", [])
-            if not posts:
-                break
-            yield posts
 
-    @error_handling_wrapper
-    async def tags(self, scrape_item: ScrapeItem, tags: str) -> None:
-        title = self.create_title(tags.replace("+", " "))
-        scrape_item.setup_as_album(title)
+class HmofaCrawler(DanBooruGenericCrawler):
+    SUPPORTED_PATHS: ClassVar[SupportedPaths] = DanBooruGenericCrawler.SUPPORTED_PATHS | {
+        "Post": ("/post/<post_id>",),
+        "Pools": ("/pools/<pool_id>",),
+    }
+    PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://hmofa.gallery")
+    DOMAIN: ClassVar[str] = "hmofa.gallery"
+    FOLDER_DOMAIN: ClassVar[str] = "Hmofa"
+    CDN: ClassVar[AbsoluteHttpURL] = PRIMARY_URL
 
-        async for posts in self._pager(scrape_item):
-            for post in posts:
-                try:
-                    file_url = post["file"]["url"]
-                except KeyError:
-                    continue
 
-                new_scrape_item = scrape_item.create_child(self.parse_url(file_url))
-                new_scrape_item.uploaded_at = self.parse_iso_date(post["created_at"])
-                self.create_eager_task(self.direct_file(new_scrape_item))
-                scrape_item.add_children()
+class E926Crawler(DanBooruGenericCrawler):
+    SUPPORTED_PATHS: ClassVar[SupportedPaths] = DanBooruGenericCrawler.SUPPORTED_PATHS | {
+        "Post": ("/posts/<post_id>",),
+        "Pools": ("/pools/<pool_id>",),
+    }
+    PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://e926.net")
+    DOMAIN: ClassVar[str] = "e926.net"
+    FOLDER_DOMAIN: ClassVar[str] = "E926"
+    CDN: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://static1.e926.net")
 
-    @error_handling_wrapper
-    async def pool(self, scrape_item: ScrapeItem, pool_id: str) -> None:
-        url = self.PRIMARY_URL / f"pools/{pool_id}.json"
-        resp: dict[str, Any] = await self.request_json(url)
-        posts = resp.get("post_ids", [])
-        title: str = resp.get("name", "Unknown Pool").replace("_", " ")
-        scrape_item.setup_as_album(title)
 
-        for post_id in posts:
-            url = self.PRIMARY_URL / f"posts/{post_id}"
-            new_scrape_item = scrape_item.create_child(url)
-            self.create_task(self.run(new_scrape_item))
-            scrape_item.add_children()
-
-    @error_handling_wrapper
-    async def post(self, scrape_item: ScrapeItem, post_id: str) -> None:
-        url = self.PRIMARY_URL / f"posts/{post_id}.json"
-        resp: dict[str, Any] = await self.request_json(url)
-        file_url: str = resp["post"]["file"]["url"]
-        await self.direct_file(scrape_item, self.parse_url(file_url))
+class FloofgensCrawler(DanBooruGenericCrawler):
+    SUPPORTED_PATHS: ClassVar[SupportedPaths] = DanBooruGenericCrawler.SUPPORTED_PATHS | {
+        "Post": ("/posts/<post_id>",),
+        "Pools": ("/pools/<pool_id>",),
+    }
+    PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://floofgens.net")
+    DOMAIN: ClassVar[str] = "floofgens.net"
+    FOLDER_DOMAIN: ClassVar[str] = "Floofgens"
+    CDN: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://static1.floofgens.net")

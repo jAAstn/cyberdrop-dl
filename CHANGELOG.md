@@ -24,10 +24,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## UNRELEASED
 
+### Added
+
+- Smugmug support
+- ImgChest support
+- Vidsonic support
+- Idagio support
+- Bitchute support
+- Soundcloud support
+- Picstate support
+- Filmarchiv.at support
+- Imagetwist support
+- Elitebabes support
+- Mashable video article support
+- Untitled.stream support
+- Tinglr support
+- Screenrec support
+- xErotica support
+- Blep support
+- Floofgens support
+- Danbooru support
+- E926 support
+- Hmofa support
+- WhiteKitten support
+- Bleachbooru support
+- Borvarbooru support
+- Direct streams support (BunnyCDN)
+- Posts and users support (pimpandhost)
+
+### Deprecated
+
+- `--crawlers.clonr.use-source` and `--crawlers.clonr.zip` will be removed on the next major release
+
+### Removed
+
+- Clonr.co support (No longer exists)
+
+### Fixed
+
+- Propagate manifest query params to segments (HLS)
+- Albums and single pictures (pimpandhost)
+- Switch to v2 API (e621)
+- Single post downloads (Cara.app)
+- Single images and galleries (Imx.to)
+- Only the first 1000 images in a gallery being downloaded (Imx.to)
+- Update API key URL (Flickr)
+- Downloads (Hotpic)
+- Archive (`.zip`) downloads (Imagepond)
+- Video downloads (Desivideo)
+- Video downloads (Erome.fan)
+- Update crawler to new site design (Pimpbunny)
+- Image and video extraction (Fsiblog)
+
+## [10.16.0] - 2026-11-15
+
+### Added
+
+- New `config fill` command
+
 ### Fixed
 
 - Some files being wrongly skipped as "previously downloaded" if they have the same name as an old download (Mediafire)
+- `No file extension` errors due to empty filenames for some public files (Mega.nz)
 - Collections (Hitomi)
+- Image downloads (Imagebam)
 - Duplicated thumbs (Erome)
 
 ## [10.15.3] - 2026-11-02
