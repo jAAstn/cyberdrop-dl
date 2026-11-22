@@ -7,20 +7,17 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from collections import Counter
-from contextvars import ContextVar
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, Final, Literal, Self, Unpack, final
 
 from aiohttp import hdrs
 
-from cyberdrop_dl import aio
+from cyberdrop_dl import aio, context
 from cyberdrop_dl.cache import TTLCacheAdapter
-from cyberdrop_dl.clients.downloads import IGNORE_CONTENT_TYPE
-from cyberdrop_dl.clients.http import HTTPClient, HTTPConfig, HTTPContext, HTTPMixin
 from cyberdrop_dl.config.settings import MAX_RATE_LIMIT
-from cyberdrop_dl.constants import USE_RETRY_PATH, FileExt, HttpMethod
-from cyberdrop_dl.crawlers import ALLOW_NO_EXT, SKIP_DOWNLOAD, Registry
+from cyberdrop_dl.constants import FileExt, HttpMethod
+from cyberdrop_dl.crawlers import Registry
 from cyberdrop_dl.crawlers._hls import HLSMixin
 from cyberdrop_dl.downloader.http import Downloader
 from cyberdrop_dl.exceptions import MaxChildrenError, NoExtensionError, ScrapeError
@@ -33,14 +30,17 @@ from cyberdrop_dl.filepath import (
 )
 from cyberdrop_dl.mediaprops import Codecs, ISO639Subtitle, Resolution, ResolvedISO639Subtitle
 from cyberdrop_dl.models.validators import strings
-from cyberdrop_dl.url_objects import AbsoluteHttpURL, MediaItem, MuxVideo, ScrapeItem, is_absolute_http_url
-from cyberdrop_dl.utils import css, dates, enter_context, fast_cache, is_blob_or_svg, m3u8, strict_variadic, unique
+from cyberdrop_dl.network.headers import get_content_disposition_filename
+from cyberdrop_dl.network.http import HTTPClient, HTTPConfig, HTTPContext, HTTPMixin
+from cyberdrop_dl.url_objects import AbsoluteHttpURL, ExtraInfo, MediaItem, MuxVideo, ScrapeItem, is_absolute_http_url
+from cyberdrop_dl.utils import css, dates, fast_cache, is_blob_or_svg, m3u8, strict_variadic, unique
 from cyberdrop_dl.utils.dataclass import ConfigDataclass, DictDataclass, struct
 from cyberdrop_dl.utils.errors import OnExceptionCallback, error_handling_context
 from cyberdrop_dl.utils.urls import (
     URLDeduper,
     is_within_domain,
     matches_any_host,
+    name_from_url,
     parse_http_url,
     path_frag,
     path_qs,
@@ -50,7 +50,6 @@ from cyberdrop_dl.utils.urls import (
 
 if TYPE_CHECKING:
     import datetime as dt
-    import http.cookies
     from collections.abc import (
         AsyncIterator,
         Awaitable,
@@ -66,11 +65,12 @@ if TYPE_CHECKING:
     from aiohttp.typedefs import LooseCookies
     from bs4 import BeautifulSoup, Tag
 
-    from cyberdrop_dl.clients.request import RequestParams
-    from cyberdrop_dl.clients.response import AbstractResponse
     from cyberdrop_dl.config import Config
+    from cyberdrop_dl.cookies import SiteCookies
     from cyberdrop_dl.database import Database
     from cyberdrop_dl.manager import Manager
+    from cyberdrop_dl.network.request import RequestParams
+    from cyberdrop_dl.network.response import AbstractResponse
     from cyberdrop_dl.progress.scraping import ScrapingUI
 
 logger = logging.getLogger(__name__)
@@ -80,8 +80,7 @@ type SupportedPaths = dict[str, str | tuple[str, ...]]
 type SupportedDomains = tuple[str, ...]
 type DebridURL = Callable[[], Awaitable[AbsoluteHttpURL]] | AbsoluteHttpURL | None
 
-ORIGIN: ContextVar[AbsoluteHttpURL] = ContextVar("ORIGIN")
-_CHECK_DL_CAPACITY: ContextVar[bool] = ContextVar("_CHECK_DL_CAPACITY")
+
 _HASH_PREFIXES = "md5:", "sha1:", "sha256:", "xxh128:"
 
 
@@ -149,25 +148,6 @@ class CrawlerInfo:
         me = dict(self)
         me["primary_url"] = str(self.primary_url)
         return me
-
-
-@struct(kw_only=False)
-class SiteCookies:
-    raw: http.cookies.BaseCookie[str]
-
-    def get(self, name: str, /) -> str | None:
-        if morsel := self.raw.get(name):
-            return morsel.value
-
-    def __getitem__(self, name: str, /) -> str:
-        value = self.get(name)
-        if value is None:
-            raise KeyError(name)
-        return value
-
-    def keys(self) -> tuple[str, ...]:
-        # dict protocol
-        return tuple(self.raw.keys())
 
 
 class _CrawlerLogger(logging.LoggerAdapter[logging.Logger]):
@@ -282,7 +262,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
         self._semaphore: asyncio.Semaphore = asyncio.Semaphore(40)
         self.config: Config = manager.config
         self.client: HTTPClient = manager.http_client
-        _CHECK_DL_CAPACITY.set(self.config.downloads.back_pressure)
+        context.CHECK_DL_CAPACITY.set(self.config.downloads.back_pressure)
 
         self.downloader: Downloader = self._build_downloader()
 
@@ -388,7 +368,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
             Registry.concrete.add(cls)
 
     async def __throttle(self) -> None:
-        if _CHECK_DL_CAPACITY.get():
+        if context.CHECK_DL_CAPACITY.get():
             await self.downloader.capacity.wait()
 
     def __json_resp_check__(self, json_resp: Any, resp: AbstractResponse[Any], /) -> None:
@@ -467,7 +447,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
     @final
     @property
     def origin(self) -> AbsoluteHttpURL:
-        return ORIGIN.get()
+        return context.ORIGIN.get()
 
     @property
     def separate_posts(self) -> bool:
@@ -545,7 +525,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
     def new_task_id(self, url: AbsoluteHttpURL):
         """Creates a new task_id (shows the URL in the UI and logs)"""
         self.log.info(f"Scraping {url}")
-        _ = ORIGIN.set(url.origin())
+        context.ORIGIN.set(url.origin())
         return self.tui.scrape.new(url)
 
     @final
@@ -656,7 +636,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
         Referer is the referer to use for the db, not the actual HTTP referer"""
 
         media_item = self._create_media_item(dl)
-        if not USE_RETRY_PATH.get():
+        if not context.USE_RETRY_PATH.get():
             await asyncio.to_thread(check_path_traversal, self.config.download_folder, media_item.download_folder)
 
         check_dangerous_filename(media_item.download_filename or media_item.filename)
@@ -727,9 +707,14 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
         try:
             return self.get_filename_and_ext(url.name).suffix
         except NoExtensionError:
-            async with self.request(url, method or self.__http_ctx__.probe_method, **kwargs) as resp:
-                name = resp.filename or "file"
-                return self.get_filename_and_ext(name, mime_type=resp.content_type).suffix
+            return await self._sniff_ext(url, method, **kwargs)
+
+    async def _sniff_ext(
+        self, url: AbsoluteHttpURL, /, method: HttpMethod | None = None, **kwargs: Unpack[RequestParams]
+    ) -> str:
+        async with self.request(url, method or self.__http_ctx__.probe_method, **kwargs) as resp:
+            name = get_content_disposition_filename(resp.headers) or "file"
+            return self.get_filename_and_ext(name, mime_type=resp.content_type, assume_ext=None).suffix
 
     def _prepare_headers(self, scrape_item: ScrapeItem) -> dict[str, str]:
         return {
@@ -742,12 +727,12 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
         self, media_item: MediaItem, streams: m3u8.Rendition | MuxVideo | None, *, skip: bool = False
     ) -> None:
         if self.__dl_config__.impersonate is not None:
-            media_item.extra_info["impersonate"] = self.__dl_config__.impersonate
+            media_item.extra_info[ExtraInfo.IMPERSONATE] = self.__dl_config__.impersonate
         if self.__dl_config__.delay:
-            media_item.extra_info["delay"] = self.__dl_config__.delay
+            media_item.extra_info[ExtraInfo.DELAY] = self.__dl_config__.delay
 
         try:
-            if skip or SKIP_DOWNLOAD.get():
+            if skip or context.SKIP_DOWNLOAD.get():
                 return
 
             await self.downloader.run(media_item, streams)
@@ -789,7 +774,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
     async def handle_media_item(self, media_item: MediaItem, streams: m3u8.Rendition | MuxVideo | None = None) -> None:
         self._prepare_media_item(media_item)
         with (
-            enter_context(IGNORE_CONTENT_TYPE, True)
+            context.enter(context.IGNORE_CONTENT_TYPE, True)
             if self.__dl_config__.ignore_content_type
             else contextlib.nullcontext()
         ):
@@ -907,7 +892,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
         try:
             return get_filename_and_ext(filename, mime_type, xenforo=cls._FORUM)
         except NoExtensionError:
-            if ALLOW_NO_EXT.get() and assume_ext:
+            if context.ALLOW_NO_EXT.get() and assume_ext:
                 return get_filename_and_ext(filename + assume_ext, mime_type, xenforo=cls._FORUM)
             raise
 
@@ -978,7 +963,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
     @final
     @property
     def cookies(self) -> SiteCookies:
-        return SiteCookies(self.client.cookies.filter_cookies(self.PRIMARY_URL))
+        return self.client.get_cookies(self.PRIMARY_URL)
 
     @final
     def update_cookies(self, cookies: LooseCookies | Mapping[str, int | str], url: yarl.URL | None = None) -> None:
@@ -1063,6 +1048,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
     ) -> None:
         """Download a direct link file. Filename will be the url slug"""
         url = url or scrape_item.url
+        url_name = name_from_url(url)
         async with self.catch_errors(url):
             if filename:
                 try:
@@ -1070,12 +1056,12 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
                 except NoExtensionError:
                     cfilename, ext = self.get_filename_and_ext(filename + url.suffix, assume_ext=assume_ext)
             else:
-                cfilename, ext = self.get_filename_and_ext(url.name or url.parent.name, assume_ext=assume_ext)
+                cfilename, ext = self.get_filename_and_ext(url_name, assume_ext=assume_ext)
 
             await self.handle_file(
                 url,
                 scrape_item,
-                filename or url.name or url.parent.name,
+                filename or url_name,
                 ext,
                 custom_filename=cfilename,
             )
@@ -1251,7 +1237,7 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
             await self.handle_file(
                 url,
                 scrape_item,
-                name or url.name or url.parent.name,
+                name or name_from_url(url),
                 ext,
                 m3u8=m3u8,
                 custom_filename=filename,
@@ -1334,7 +1320,13 @@ class API(HTTPMixin, ABC):
     @final
     @property
     def origin(self) -> AbsoluteHttpURL:
-        return ORIGIN.get()
+        return context.ORIGIN.get()
+
+    @final
+    @property
+    def cookies(self) -> SiteCookies:
+        assert self.PRIMARY_URL != API.PRIMARY_URL
+        return self.client.get_cookies(self.PRIMARY_URL)
 
 
 def _make_scrape_mapper_keys(cls: type[Crawler] | Crawler) -> tuple[str, ...]:
@@ -1439,7 +1431,7 @@ def _should_skip_by_config(media_item: MediaItem, config: Config) -> bool:
 
 
 def _prepare_download_path(item: ScrapeItem, domain: str, config: Config) -> Path:
-    if item.retry_info and USE_RETRY_PATH.get():
+    if item.retry_info and context.USE_RETRY_PATH.get():
         return item.retry_info.download_path
 
     path = item.download_folder / item.path
@@ -1513,7 +1505,7 @@ def _prepare_debrid_url(debrid_url: DebridURL) -> DebridURL:
         request_dl_url = debrid_url
 
         async def debrid_url() -> AbsoluteHttpURL:
-            with enter_context(_CHECK_DL_CAPACITY, False):
+            with context.enter(context.CHECK_DL_CAPACITY, False):
                 return await request_dl_url()
 
     return debrid_url

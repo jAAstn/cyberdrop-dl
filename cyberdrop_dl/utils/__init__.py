@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import itertools
 import logging
 import operator
@@ -13,19 +12,9 @@ from cyberdrop_dl.exceptions import ScrapeError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Iterator
-    from contextvars import ContextVar
 
 
 logger = logging.getLogger(__name__)
-
-
-@contextlib.contextmanager
-def enter_context[T](context_var: ContextVar[T], value: T, /) -> Generator[None]:
-    token = context_var.set(value)
-    try:
-        yield
-    finally:
-        context_var.reset(token)
 
 
 def extract_text(text: str, /, start: str, end: str, pos: int | None = None) -> tuple[int, str]:
@@ -161,12 +150,11 @@ def b64_pad(b64_string: str) -> str:
     return b64_string
 
 
-type AnythingButTuple = (
+type AnythingButTupleOrList = (
     str
     | bytes
     | int
     | float
-    | list[Any]
     | Mapping[Any, Any]
     | set[Any]
     | frozenset[Any]
@@ -179,19 +167,23 @@ type AnythingButTuple = (
 
 
 @overload
-def strict_variadic[T: AnythingButTuple](value: T) -> tuple[T, ...]: ...
+def strict_variadic[T: AnythingButTupleOrList](value: T) -> tuple[T, ...]: ...
 
 
 @overload
-def strict_variadic[T: AnythingButTuple](value: tuple[T, ...]) -> tuple[T, ...]: ...
+def strict_variadic[T: AnythingButTupleOrList](value: tuple[T, ...]) -> tuple[T, ...]: ...
+
+
+@overload
+def strict_variadic[T: AnythingButTupleOrList](value: list[T]) -> list[T]: ...
 
 
 @overload
 def strict_variadic[T: tuple[Any, ...]](value: T) -> T: ...
 
 
-def strict_variadic(value: Any) -> tuple[Any, ...]:
-    if type(value) is tuple:
+def strict_variadic(value: Any) -> tuple[Any, ...] | list[Any]:
+    if type(value) in {tuple, list}:
         return value
     return (value,)
 
@@ -253,3 +245,11 @@ def catch[**P, R](
             return None
 
     return call
+
+
+def remove_quotes(string: str) -> str:
+    if len(string) > 1:
+        start, end = string[0], string[-1]
+        if start in {"'", '"'} and start == end:
+            return string[1:-1]
+    return string

@@ -9,17 +9,17 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Unpack
 
 from cyberdrop_dl import env
 from cyberdrop_dl.cache import disk_cached_method
-from cyberdrop_dl.clients.http import HTTPConfig
 from cyberdrop_dl.crawlers.crawler import API
 from cyberdrop_dl.crawlers.twitter.models import Broadcast, Tweet
 from cyberdrop_dl.exceptions import DownloadError, ScrapeError
+from cyberdrop_dl.network.http import HTTPConfig
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
 
-    from cyberdrop_dl.clients import HttpMethod
-    from cyberdrop_dl.clients.request import RequestParams
+    from cyberdrop_dl.network import HttpMethod
+    from cyberdrop_dl.network.request import RequestParams
 
 
 @HTTPConfig(rate_limit=(3, 1))  # Actual limit is 1000 req/min (~ 16.7 req/s) per IP
@@ -174,8 +174,8 @@ class TwitterAPI(API):
         auth: bool = False,  # noqa: FBT001, FBT002
         **kwargs: Unpack[RequestParams],
     ) -> Any:
-        if morsel := self.client.cookies.filter_cookies(self.PRIMARY_URL).get("ct0"):
-            self.__http_ctx__.headers["x-csrf-token"] = morsel.value
+        if token := self.cookies.get("ct0"):
+            self.__http_ctx__.headers["x-csrf-token"] = token
 
         if auth:
             kwargs.setdefault("headers", {})["x-guest-token"] = await self.auth_guest()

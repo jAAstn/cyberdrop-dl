@@ -4,38 +4,36 @@ import asyncio
 import itertools
 import logging
 import time
-from contextvars import ContextVar
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, ClassVar, final
 
 from aiohttp import hdrs
 
-from cyberdrop_dl import aio, constants, ffmpeg, storage
-from cyberdrop_dl.clients import etag
-from cyberdrop_dl.clients.http import JSON_CHECK, check_http_status
-from cyberdrop_dl.constants import USE_RETRY_PATH, FileExt
+from cyberdrop_dl import aio, constants, context, ffmpeg, storage
+from cyberdrop_dl.constants import FileExt
 from cyberdrop_dl.exceptions import DownloadError, InvalidContentTypeError, SlowDownloadError
+from cyberdrop_dl.network import etag
+from cyberdrop_dl.network.headers import content_length, get_content_type, get_last_modified
+from cyberdrop_dl.network.http import check_http_status
 from cyberdrop_dl.signature import dataclass_repr
-from cyberdrop_dl.url_objects import ByteRange
-from cyberdrop_dl.utils import dates, enter_context
+from cyberdrop_dl.url_objects import ByteRange, ExtraInfo
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
     from typing import Any
 
-    from cyberdrop_dl.clients.http import HTTPClient
-    from cyberdrop_dl.clients.response import AbstractResponse
     from cyberdrop_dl.config import Config
     from cyberdrop_dl.manager import Manager
+    from cyberdrop_dl.network.http import HTTPClient
+    from cyberdrop_dl.network.response import AbstractResponse
     from cyberdrop_dl.progress import ProgressHook
     from cyberdrop_dl.url_objects import MediaItem
 
 
 logger = logging.getLogger(__name__)
 
-IGNORE_CONTENT_TYPE: ContextVar[bool] = ContextVar("IGNORE_CONTENT_TYPE", default=False)
-_CONTENT_TYPES_OVERRIDES: dict[str, str] = {"text/vnd.trolltech.linguist": "video/MP2T"}
+
 _SLOW_DOWNLOAD_PERIOD: int = 10  # seconds
 
 
@@ -78,7 +76,7 @@ class DownloadClient:
 
         bytes_downloaded = 0
         media_item.headers.pop(hdrs.RANGE, None)  # Delete ranges from previous attempts
-        byte_range: ByteRange | None = media_item.extra_info.get("byte_range")
+        byte_range: ByteRange | None = media_item.extra_info.get(ExtraInfo.BYTE_RANGE)
 
         if self.SUPPORTS_RANGES:
             if media_item.partial_file and (size := await aio.get_size(media_item.partial_file)):
@@ -98,16 +96,16 @@ class DownloadClient:
 
         delay = self.config.downloads.total_delay
         if not media_item.is_segment:
-            delay += media_item.extra_info.get("delay", 0)
+            delay += media_item.extra_info.get(ExtraInfo.DELAY, 0)
 
         await asyncio.sleep(delay)
 
         download_url = await media_item.resolve()
-        with enter_context(JSON_CHECK, media_item.json_check):
+        with self.http_client.json_ctx(media_item.json_check):
             async with self.http_client.raw_request(
                 download_url,
                 headers=media_item.headers,
-                impersonate=media_item.extra_info.get("impersonate"),
+                impersonate=media_item.extra_info.get(ExtraInfo.IMPERSONATE),
             ) as resp:
                 return await self._process_response(media_item, domain, bytes_downloaded, resp)
 
@@ -136,7 +134,7 @@ class DownloadClient:
             media_item.size = resume_point
             return True
 
-        media_item.size = _get_content_length(resp.headers)
+        media_item.size = content_length(resp.headers)
         if resp.status == HTTPStatus.PARTIAL_CONTENT:
             # Content-Length of a ranged response only counts the bytes after resume_point.
             # Every check below (partial size, final size, filesize limits) needs the size of the whole file
@@ -156,7 +154,7 @@ class DownloadClient:
             return True
 
     def _make_hook(self, media_item: MediaItem) -> ProgressHook:
-        if media_item.is_segment and not media_item.extra_info.get("MUX_STREAM"):
+        if media_item.is_segment and not media_item.extra_info.get(ExtraInfo.MUX_STREAM):
             return self.manager.scrape_mapper.tui.downloads.download_hls_seg()
 
         size = media_item.size
@@ -178,14 +176,13 @@ class DownloadClient:
     async def _append_content(self, media_item: MediaItem, hook: ProgressHook, resp: AbstractResponse[Any]) -> None:
         check_free_space = storage.create_free_space_checker(media_item)
         check_download_speed = make_speed_checker(media_item, hook, self.download_speed_threshold)
-        await check_free_space(_get_content_length(resp.headers))
+        await check_free_space(content_length(resp.headers))
         await self._pre_download_check(media_item)
 
         async with self._track_speed(hook), aio.open(media_item.partial_file, mode="ab") as f:
             async for chunk in resp.iter_chunked(self.chunk_size):
                 n_bytes = len(chunk)
-                await self.speed_limiter.acquire(n_bytes)
-                await check_free_space()
+                await asyncio.gather(check_free_space(), self.speed_limiter.acquire(n_bytes))  # noqa: TID251
                 await f.write(chunk)
                 hook.advance(n_bytes)
                 check_download_speed()
@@ -364,25 +361,11 @@ def _check_filesize_limits(media: MediaItem, config: Config) -> bool:
 
 
 def _check_content_type(content_type: str, ext: str) -> str | None:
-    if IGNORE_CONTENT_TYPE.get():
+    if context.IGNORE_CONTENT_TYPE.get():
         return
     if _is_html_or_text(content_type) and ext.lower() not in FileExt.TEXT:
         msg = f"Received '{content_type}', was expecting binary payload"
         raise InvalidContentTypeError(message=msg)
-
-
-def _get_content_type(headers: Mapping[str, str]) -> str | None:
-    content_type = headers.get(hdrs.CONTENT_TYPE)
-    if not content_type:
-        return None
-
-    override_key = next((name for name in _CONTENT_TYPES_OVERRIDES if name in content_type), "<NO_OVERRIDE>")
-    return _CONTENT_TYPES_OVERRIDES.get(override_key) or content_type
-
-
-def _get_last_modified(headers: Mapping[str, str]) -> int | None:
-    if date_str := headers.get(hdrs.LAST_MODIFIED):
-        return int(dates.parse_http(date_str).timestamp())
 
 
 def _is_html_or_text(content_type: str) -> bool:
@@ -466,18 +449,8 @@ def make_speed_checker(media_item: MediaItem, hook: ProgressHook, speed_threshol
     return check_download_speed
 
 
-def _get_content_length(headers: Mapping[str, str], *, _required: bool = False) -> int:
-    try:
-        return int(headers[hdrs.CONTENT_LENGTH])
-    except KeyError:
-        if not _required:
-            return 0
-        msg = f"Download response has no `{hdrs.CONTENT_LENGTH}` header. Refusing to download"
-        raise DownloadError(HTTPStatus.LENGTH_REQUIRED, msg, retry=False) from None
-
-
 def _set_upload_date(media_item: MediaItem, headers: Mapping[str, str]) -> None:
-    if not media_item.is_segment and not media_item.uploaded_at and (last_modified := _get_last_modified(headers)):
+    if not media_item.is_segment and not media_item.uploaded_at and (last_modified := get_last_modified(headers)):
         logger.warning(
             "Unable to parse upload date for %s, using `%s` header as file datetime",
             media_item.url,
@@ -501,7 +474,7 @@ async def _check_response(media_item: MediaItem, resp: AbstractResponse[Any], re
     etag.check(resp.headers)
     await check_http_status(resp)
 
-    if not media_item.is_segment and (content_type := _get_content_type(resp.headers)):
+    if not media_item.is_segment and (content_type := get_content_type(resp.headers)):
         _check_content_type(content_type, media_item.ext)
 
     _check_for_placeholder_files(resp.headers)
@@ -517,7 +490,7 @@ async def _check_response(media_item: MediaItem, resp: AbstractResponse[Any], re
 
 
 def resolve_download_dir(download_folder: Path, config: Config) -> Path:
-    if config.subfolders.create or USE_RETRY_PATH.get():
+    if config.subfolders.create or context.USE_RETRY_PATH.get():
         return download_folder
 
     # Only keep the fist subfolder (if any)

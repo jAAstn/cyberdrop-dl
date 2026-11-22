@@ -10,9 +10,9 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self, override
 
-from cyberdrop_dl import aio, env, filepath, storage
+from cyberdrop_dl import aio, context, env, filepath, storage
 from cyberdrop_dl.constants import BLOCKED_DOMAINS
-from cyberdrop_dl.crawlers import ALLOW_NO_EXT, create_crawlers
+from cyberdrop_dl.crawlers import create_crawlers
 from cyberdrop_dl.csv_logs import CSVLogsManager
 from cyberdrop_dl.exceptions import JDownloaderError, NoExtensionError
 from cyberdrop_dl.logs import log_spacer
@@ -32,13 +32,13 @@ from cyberdrop_dl.utils.urls import URLDeduper, matches_any_host, remove_trailin
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Generator, Iterator, Mapping
 
-    from cyberdrop_dl.clients.jd.client import JDownloader
     from cyberdrop_dl.config import Config
     from cyberdrop_dl.config.crawlers import GenericCrawlers
     from cyberdrop_dl.crawlers.crawler import Crawler
     from cyberdrop_dl.crawlers.http_direct import DirectHttpFileCrawler
     from cyberdrop_dl.crawlers.realdebrid import RealDebridCrawler
     from cyberdrop_dl.manager import Manager
+    from cyberdrop_dl.network.jd.client import JDownloader
 
 
 logger = logging.getLogger(__name__)
@@ -106,9 +106,9 @@ class ScrapeMapper:
     """This class maps links to their respective handlers, or JDownloader if they are unsupported."""
 
     def __init__(self, manager: Manager) -> None:
-        from cyberdrop_dl.clients.jd.client import JDownloader
         from cyberdrop_dl.crawlers.http_direct import DirectHttpFileCrawler
         from cyberdrop_dl.crawlers.realdebrid import RealDebridCrawler
+        from cyberdrop_dl.network.jd.client import JDownloader
 
         self.manager: Manager = manager
         self.crawlers: dict[str, type[Crawler]] = {}
@@ -190,14 +190,12 @@ class ScrapeMapper:
 
     @contextlib.asynccontextmanager
     async def __call__(self) -> AsyncGenerator[Self]:
-        from cyberdrop_dl.downloader.hls import CONCURRENT_SEGMENTS
-
         assert not self.task_mngr.scrape.done.is_set()
 
         config = self.manager.config
 
-        _ = CONCURRENT_SEGMENTS.set(config.downloads.concurrent_segments)
-        _ = ALLOW_NO_EXT.set(config.filters.allow_files_with_no_extension)
+        context.CONCURRENT_SEGMENTS.set(config.downloads.concurrent_segments)
+        context.ALLOW_NO_EXT.set(config.filters.allow_files_with_no_extension)
 
         filepath.setup(config.max_file_name_length, config.max_folder_name_length, config.restrict_path)
 

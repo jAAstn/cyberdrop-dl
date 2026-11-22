@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 from multidict import CIMultiDict
 
-from cyberdrop_dl.clients.downloads import DownloadClient, _check_content_type, _get_content_type, resolve_download_dir
+from cyberdrop_dl import context
 from cyberdrop_dl.config import Config
-from cyberdrop_dl.constants import USE_RETRY_PATH
 from cyberdrop_dl.exceptions import InvalidContentTypeError
 from cyberdrop_dl.manager import Manager
-from cyberdrop_dl.utils import enter_context
+from cyberdrop_dl.network.downloads import DownloadClient, _check_content_type, resolve_download_dir
+from cyberdrop_dl.network.headers import get_content_type
 
 
 @pytest.mark.parametrize(
@@ -33,7 +33,7 @@ def test_chunk_size_is_never_greater_that_speed_limit(manager: Manager, limit: i
 
 def test_get_content_type() -> None:
     def get(value: str) -> str:
-        content_type = _get_content_type(CIMultiDict({"content-type": value}))
+        content_type = get_content_type(CIMultiDict({"content-type": value}))
         assert content_type
         return content_type
 
@@ -50,7 +50,7 @@ def test_check_content_type() -> None:
 
 
 def test_get_content_type_missing_headers() -> None:
-    assert _get_content_type({}) is None
+    assert get_content_type({}) is None
 
 
 class TestResolveDownloadDir:
@@ -80,7 +80,7 @@ class TestResolveDownloadDir:
     def test_returns_download_folder_when_retry_path_enabled(self, config: Config) -> None:
         download_folder = Path("/not_relative/to/download/dir")
 
-        with enter_context(USE_RETRY_PATH, True):
+        with context.enter(context.USE_RETRY_PATH, True):
             result = resolve_download_dir(download_folder, config)
 
         assert result == download_folder

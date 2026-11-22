@@ -47,20 +47,23 @@ def parse_http_url(
     """Parse a string into an absolute URL, handling relative URLs, encoding and optionally removes trailing slash (trimming)."""
 
     url = link if is_url(link) else str_to_url(link)
-    if not _is_absolute_http_url(url):
-        if not relative_to:
-            raise ValueError("Relative URL with no known origin", url)
-        url = resolve_url(url, relative_to)
-
+    url = resolve_url(url, relative_to)
     check_url(url)
     if not trim:
         return url
     return remove_trailing_slash(url)
 
 
-def resolve_url(url: yarl.URL, origin: AbsoluteHttpURL) -> AbsoluteHttpURL:
-    url = origin.join(url) if not url.absolute else url
-    if not url.scheme:
+def resolve_url(url: yarl.URL, origin: AbsoluteHttpURL | None) -> AbsoluteHttpURL:
+    if not _is_absolute_http_url(url):
+        if origin:
+            url = origin.join(url)
+        elif url.absolute:
+            url = url.with_scheme("https")
+        else:
+            raise ValueError("Relative URL with no known origin", url)
+
+    if url.absolute and not url.scheme:
         url = url.with_scheme(origin.scheme if origin else "https")
     if not _is_absolute_http_url(url):
         raise ValueError(f"Unable to parse an absolute URL from {url}")
@@ -158,6 +161,40 @@ def is_within_domain(root_domain: str, host: str) -> bool:
     host = host.lower().removeprefix("www.")
     root_domain = root_domain.lower().removeprefix("www.")
     return (host == root_domain) or host.endswith("." + root_domain.removeprefix("."))
+
+
+def _second_to_last_part(url: yarl.URL) -> str:
+    match url.parts:
+        case [_, *_, previous_part, _]:
+            return previous_part
+        case _:
+            return ""
+
+
+def name_from_url(url: yarl.URL) -> str:
+    """Get the last part of the URL, ignoring a (single) trailing slash
+
+    NOTE: this could still return an empty string"""
+    if not url.absolute:
+        return ""
+
+    if url.name:
+        return url.name
+    return _second_to_last_part(url)
+
+
+def suffix_from_url(url: yarl.URL) -> str:
+    """Get suffix of last part of the URL, ignoring a (single) trailing slash
+
+    NOTE: this could still return an empty string"""
+    if not url.absolute:
+        return ""
+
+    if url.name:
+        return url.suffix
+
+    stem, _, suffix = _second_to_last_part(url).rpartition(".")
+    return f".{suffix}" if stem and suffix else ""
 
 
 class URLDeduper(Deduper[str]):

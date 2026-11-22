@@ -12,27 +12,28 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, Unpack, final, 
 import aiohttp
 from aiohttp import hdrs
 
-from cyberdrop_dl import aio, cookies, ddos_guard, env
-from cyberdrop_dl.clients import curl_cffi, flaresolverr, get_logger, tcp, wreq
-from cyberdrop_dl.clients.request import Request, RequestParams
-from cyberdrop_dl.clients.response import AbstractResponse, FlareSolverrResponse
-from cyberdrop_dl.cookies import make_simple_cookie
+from cyberdrop_dl import aio, context, cookies, ddos_guard, env
+from cyberdrop_dl.constants import CDL_USER_AGENT
+from cyberdrop_dl.cookies import SiteCookies, make_simple_cookie
 from cyberdrop_dl.exceptions import DDOSGuardError, DownloadError, ScrapeError
+from cyberdrop_dl.network import curl_cffi, flaresolverr, get_logger, tcp, wreq
+from cyberdrop_dl.network.request import Request, RequestParams
+from cyberdrop_dl.network.response import AbstractResponse, FlareSolverrResponse
 from cyberdrop_dl.signature import dataclass_repr
-from cyberdrop_dl.utils import enter_context, truncated_preview
+from cyberdrop_dl.url_objects import AbsoluteHttpURL
+from cyberdrop_dl.utils import truncated_preview
 from cyberdrop_dl.utils.dataclass import ConfigDataclass, struct
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
     from pathlib import Path
 
     from bs4 import BeautifulSoup
     from curl_cffi.requests import AsyncSession
     from curl_cffi.requests.models import Response as CurlResponse
 
-    from cyberdrop_dl.clients.wreq import WreqClient  # pyright: ignore[reportPrivateLocalImportUsage]
     from cyberdrop_dl.config import Config
-    from cyberdrop_dl.url_objects import AbsoluteHttpURL
+    from cyberdrop_dl.network.wreq import WreqClient  # pyright: ignore[reportPrivateLocalImportUsage]
 
     from . import HttpMethod
 
@@ -41,7 +42,7 @@ type RequestContext = contextlib.AbstractAsyncContextManager[AbstractResponse[An
 type RateLimit = tuple[float, float]
 type JSONCheck = Callable[[Any, AbstractResponse[Any]], None]
 
-JSON_CHECK: ContextVar[JSONCheck | None] = ContextVar("JSON_CHECK", default=None)
+_JSON_CHECK: ContextVar[JSONCheck | None] = ContextVar("_JSON_CHECK", default=None)
 
 logger = get_logger(__name__)
 
@@ -76,7 +77,7 @@ class RequestDoneCallback(Protocol):
     ) -> None: ...
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
+@struct
 class HTTPLimiter:
     global_: aio.RateLimiter
     downloads: asyncio.Semaphore
@@ -96,8 +97,8 @@ class HTTPClient:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.limiter = HTTPLimiter(
-            aio.RateLimiter.w_no_burst(config.network.rate_limit),
-            asyncio.Semaphore(config.downloads.concurrency),
+            global_=aio.RateLimiter.w_no_burst(config.network.rate_limit),
+            downloads=asyncio.Semaphore(config.downloads.concurrency),
         )
 
         self._ssl_context = None
@@ -231,7 +232,13 @@ class HTTPClient:
             requote_redirect_url=False,
         )
 
-    async def load_cookie_files(self, cookie_files: list[Path]) -> None:
+    def get_cookies(self, url: AbsoluteHttpURL) -> SiteCookies:
+        return SiteCookies(self.cookies.filter_cookies(url))
+
+    def get_cookies_by_host(self, host: str) -> SiteCookies:
+        return self.get_cookies(AbsoluteHttpURL(f"https://{host.removeprefix('.')}"))
+
+    async def load_cookie_files(self, cookie_files: Sequence[Path]) -> None:
         if not cookie_files:
             return
 
@@ -408,6 +415,10 @@ class HTTPClient:
         self._flaresolverr_ua = flaresolverr.USER_AGENT.get()
         return FlareSolverrResponse.create(solution)
 
+    @classmethod
+    def json_ctx(cls, json_check: JSONCheck | None) -> contextlib.AbstractContextManager[None]:
+        return context.setdefault(_JSON_CHECK, json_check)
+
 
 async def _check_json(response: AbstractResponse[Any]) -> None:
     if "json" not in response.content_type:
@@ -419,7 +430,7 @@ async def _check_json(response: AbstractResponse[Any]) -> None:
         logger.exception("Unable to decode JSON response from %s", response.url)
         return
 
-    if check := JSON_CHECK.get():
+    if check := _JSON_CHECK.get():
         check(data, response)
         return
 
@@ -440,7 +451,7 @@ class HTTPMixin(HTTPController, Protocol):
             await ctx.throttle()
 
         limiter = self.client.limiter.per_domain.get(ctx.domain, contextlib.nullcontext())
-        with enter_context(JSON_CHECK, ctx.json_check):
+        with self.client.json_ctx(ctx.json_check):
             async with limiter, self.client.limiter.global_:
                 yield
 
@@ -543,24 +554,9 @@ class HTTPConfig(ConfigDataclass):
     json_check: JSONCheck | None = None
     probe_method: HttpMethod | None = None
 
-    @classmethod
-    def default_headers(
-        cls,
-        user_agent: str | None = None,
-        referer: str | None = None,
-        host: str | None = None,
-        content_type: str | None = None,
-        accept: str | None = None,
-        **kwargs: str,
-    ) -> HTTPConfig:
-        headers = {
-            hdrs.USER_AGENT: user_agent,
-            hdrs.REFERER: referer,
-            hdrs.HOST: host,
-            hdrs.CONTENT_TYPE: content_type,
-            hdrs.ACCEPT: accept,
-        } | kwargs
-        return HTTPConfig(headers={k: v for k, v in headers.items() if v is not None})
+    @staticmethod
+    def cdl_user_agent() -> dict[str, str]:
+        return {"User-Agent": CDL_USER_AGENT}
 
     @override
     def __or__(self, other: Self) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -576,7 +572,7 @@ class HTTPConfig(ConfigDataclass):
 
 
 @final
-@dataclasses.dataclass(slots=True, frozen=True)
+@struct
 class HTTPContext:
     domain: str
     rate_limit: RateLimit
