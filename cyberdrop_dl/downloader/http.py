@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, ClassVar, final
 from aiohttp import ClientConnectorError, ClientError, ClientResponseError
 
 from cyberdrop_dl import aio, constants, env, ffmpeg, storage
-from cyberdrop_dl.clients.downloads import filter_by_duration, resolve_download_dir
 from cyberdrop_dl.downloader import hls
 from cyberdrop_dl.exceptions import (
     DownloadError,
@@ -22,9 +21,10 @@ from cyberdrop_dl.exceptions import (
     RestrictedFiletypeError,
     SkipDownloadError,
 )
+from cyberdrop_dl.network.downloads import filter_by_duration, resolve_download_dir
 from cyberdrop_dl.progress.scraping import show_msg
 from cyberdrop_dl.signature import dataclass_repr
-from cyberdrop_dl.url_objects import MuxVideo
+from cyberdrop_dl.url_objects import ExtraInfo, MuxVideo
 from cyberdrop_dl.utils import dates
 from cyberdrop_dl.utils.errors import error_handling_wrapper
 from cyberdrop_dl.utils.m3u8 import Rendition
@@ -33,9 +33,9 @@ if TYPE_CHECKING:
     import datetime as dt
     from collections.abc import AsyncGenerator
 
-    from cyberdrop_dl.clients.downloads import DownloadClient
     from cyberdrop_dl.config import Config
     from cyberdrop_dl.manager import Manager
+    from cyberdrop_dl.network.downloads import DownloadClient
     from cyberdrop_dl.progress.scraping import ScrapingUI
     from cyberdrop_dl.url_objects import AbsoluteHttpURL, MediaItem
 
@@ -185,7 +185,7 @@ class Downloader:
         if not _is_allowed_date_range(media_item, self.config):
             raise RestrictedDateRangeError(origin=media_item)
         if not await storage.has_sufficient_space(media_item.download_folder):
-            raise InsufficientFreeSpaceError(media_item)
+            raise InsufficientFreeSpaceError(origin=media_item)
         if await filter_by_duration(media_item, self.config):
             await self.manager.database.history.add_duration(media_item.domain, media_item)
             raise DurationError(origin=media_item)
@@ -321,7 +321,7 @@ class Downloader:
         def create_stream_item(name: str, url: AbsoluteHttpURL) -> MediaItem:
             filename = p_name.with_suffix(f".{name}{constants.TempExt.PART}").name
             seg_item = media_item.as_segment(filename, url)
-            seg_item.extra_info["MUX_STREAM"] = True
+            seg_item.extra_info[ExtraInfo.MUX_STREAM] = True
             return seg_item
 
         logger.info(f"{self.log_prefix} starting (multistream video): {media_item.url}\n %s", mux.__json__())

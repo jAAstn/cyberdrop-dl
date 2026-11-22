@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
 
 from cyberdrop_dl import aio
-from cyberdrop_dl.clients.http import HTTPConfig
 from cyberdrop_dl.constants import CDL_USER_AGENT
 from cyberdrop_dl.crawlers.crawler import API, Crawler, SupportedDomains, SupportedPaths
+from cyberdrop_dl.network.http import HTTPConfig
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
 from cyberdrop_dl.utils import Deduper
 from cyberdrop_dl.utils.errors import error_handling_wrapper
@@ -249,12 +249,12 @@ class DanBooruCrawler(DanBooruGenericCrawler):
 class BleachBooruCrawler(DanBooruCrawler):
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://bleachbooru.org")
     DOMAIN: ClassVar[str] = "bleachbooru"
-    FOLDER_DOMAIN: ClassVar[str] = "BleacBooru"
+    FOLDER_DOMAIN: ClassVar[str] = "BleachBooru"
     CDN: ClassVar[AbsoluteHttpURL] = PRIMARY_URL
 
 
 class BorvarBooruCrawler(DanBooruCrawler):
     PRIMARY_URL: ClassVar[AbsoluteHttpURL] = AbsoluteHttpURL("https://booru.borvar.art")
     DOMAIN: ClassVar[str] = "booru.borvar.art"
-    FOLDER_DOMAIN: ClassVar[str] = "booru.borvar.art"
+    FOLDER_DOMAIN: ClassVar[str] = "BorvarArt"
     CDN: ClassVar[AbsoluteHttpURL] = PRIMARY_URL

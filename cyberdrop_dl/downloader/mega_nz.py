@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, ClassVar, final, override
 
 from mega.chunker import MegaChunker, get_chunks
 
 from cyberdrop_dl import aio, storage
-from cyberdrop_dl.clients.downloads import DownloadClient, _get_content_length, make_speed_checker
 from cyberdrop_dl.downloader.http import Downloader
+from cyberdrop_dl.network.downloads import DownloadClient, make_speed_checker
+from cyberdrop_dl.network.headers import content_length
 
 if TYPE_CHECKING:
-    from cyberdrop_dl.clients.response import AbstractResponse
+    from cyberdrop_dl.network.response import AbstractResponse
     from cyberdrop_dl.progress import ProgressHook
     from cyberdrop_dl.url_objects import MediaItem
 
@@ -24,7 +26,7 @@ class MegaDownloadClient(DownloadClient):  # pyright: ignore[reportGeneralTypeIs
 
         check_free_space = storage.create_free_space_checker(media_item)
         check_download_speed = make_speed_checker(media_item, hook, self.download_speed_threshold)
-        await check_free_space(_get_content_length(resp.headers))
+        await check_free_space(content_length(resp.headers))
         await self._pre_download_check(media_item)
 
         crypto, file_size = media_item.extra_info[media_item.domain]["key"]
@@ -35,10 +37,8 @@ class MegaDownloadClient(DownloadClient):  # pyright: ignore[reportGeneralTypeIs
             for _, chunk_size in get_chunks(file_size):
                 raw_chunk = await aiohttp_resp.content.readexactly(chunk_size)
                 chunk = chunk_decryptor.read(raw_chunk)
-                await check_free_space()
                 chunk_size = len(chunk)
-
-                await self.speed_limiter.acquire(chunk_size)
+                await asyncio.gather(check_free_space(), self.speed_limiter.acquire(chunk_size))  # noqa: TID251
                 await f.write(chunk)
                 hook.advance(chunk_size)
                 check_download_speed()

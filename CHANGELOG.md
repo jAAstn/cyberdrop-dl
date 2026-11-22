@@ -24,8 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## UNRELEASED
 
+### Fixed
+
+- Handle media with malformed/no names (Patreon)
+
+## [10.17.0] - 2026-11-26
+
 ### Added
 
+- New `--no-preallocate` option
 - Smugmug support
 - ImgChest support
 - Vidsonic support
@@ -50,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bleachbooru support
 - Borvarbooru support
 - Direct streams support (BunnyCDN)
-- Posts and users support (pimpandhost)
+- Posts and users support (Pimpandhost)
+- Support more URL formats (Vidara)
 
 ### Deprecated
 
@@ -58,23 +66,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- Clonr.co support (No longer exists)
+- Clonr.co support (no longer exists)
 
 ### Fixed
 
 - Propagate manifest query params to segments (HLS)
-- Albums and single pictures (pimpandhost)
+- Albums and single pictures (Pimpandhost)
 - Switch to v2 API (e621)
 - Single post downloads (Cara.app)
 - Single images and galleries (Imx.to)
 - Only the first 1000 images in a gallery being downloaded (Imx.to)
 - Update API key URL (Flickr)
-- Downloads (Hotpic)
+- Update crawler to new site design (Hotpic)
 - Archive (`.zip`) downloads (Imagepond)
 - Video downloads (Desivideo)
 - Video downloads (Erome.fan)
 - Update crawler to new site design (Pimpbunny)
 - Image and video extraction (Fsiblog)
+- Videos and search results (Masahub)
+- `403 - Forbidden` on every post (Nsfw.xxx)
+- Episode extraction (OnePace)
+- Video extraction and search results (MyDesi)
+- Galleries (Pixhost)
+- Files from a filesystem URL being skipped if their thumbnail was already downloaded (PixelDrain/Nova)
+- Wrong file extension for thumbnails of filesystem files (PixelDrain/Nova)
 
 ## [10.16.0] - 2026-11-15
 

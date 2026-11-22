@@ -9,9 +9,9 @@ from contextvars import ContextVar
 from http import HTTPStatus
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
-from cyberdrop_dl import aio, constants, ffmpeg
+from cyberdrop_dl import aio, constants, context, ffmpeg
 from cyberdrop_dl.exceptions import DownloadError
-from cyberdrop_dl.url_objects import ByteRange
+from cyberdrop_dl.url_objects import ByteRange, ExtraInfo
 from cyberdrop_dl.utils.cleanup import rm_partial_files
 from cyberdrop_dl.utils.crypto import aes_cbc_decrypt, aes_unpad
 from cyberdrop_dl.utils.m3u8 import HLSKey
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from m3u8.model import InitializationSection, Segment
 
-    from cyberdrop_dl.clients.http import HTTPClient
+    from cyberdrop_dl.network.http import HTTPClient
     from cyberdrop_dl.url_objects import AbsoluteHttpURL, MediaItem
     from cyberdrop_dl.utils.m3u8 import M3U8, Rendition
 
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONCURRENT_SEGMENTS: ContextVar[int] = ContextVar("CONCURRENT_SEGMENTS")
+
 _PLAYLIST_FILE = f"playlist{constants.TempExt.HLS}"
 _DECRYPTER: ContextVar[AESHLSDecrypter] = ContextVar("_DECRYPTER")
 
@@ -111,9 +111,12 @@ def _create_media_segment(media_item: MediaItem, segment: HLSSegment, download_f
     new_item = media_item.as_segment(segment.name, segment.url)
     new_item.download_folder = download_folder
     if segment.decrypt_info:
-        segment.decrypt_info(new_item.extra_info)
+        key = new_item.extra_info.setdefault(ExtraInfo.HLS_DECRYPT_INFO, segment.decrypt_info)
+        if key is not segment.decrypt_info:
+            raise RuntimeError("Another key is already set")
+
     if segment.byte_range:
-        new_item.extra_info["byte_range"] = segment.byte_range
+        new_item.extra_info[ExtraInfo.BYTE_RANGE] = segment.byte_range
 
     return new_item
 
@@ -255,7 +258,7 @@ async def download(media_item: MediaItem, rendition: Rendition, download_fn: Dow
     """Download a rendition group"""
     temp_dir = media_item.path.with_suffix(constants.TempExt.HLS)
 
-    sem = asyncio.BoundedSemaphore(CONCURRENT_SEGMENTS.get())
+    sem = asyncio.BoundedSemaphore(context.CONCURRENT_SEGMENTS.get())
 
     async def download(m3u8: M3U8) -> Path:
         _DECRYPTER.set(AESHLSDecrypter(client))

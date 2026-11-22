@@ -11,14 +11,14 @@ from cyberdrop_dl.url_objects import AbsoluteHttpURL
 from cyberdrop_dl.utils import css, open_graph, unique
 from cyberdrop_dl.utils.dataclass import struct
 from cyberdrop_dl.utils.errors import error_handling_wrapper
-from cyberdrop_dl.utils.urls import parse_http_url
+from cyberdrop_dl.utils.urls import name_from_url, parse_http_url
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from cyberdrop_dl.clients.request import RequestParams
-    from cyberdrop_dl.clients.response import AbstractResponse
     from cyberdrop_dl.constants import HttpMethod
+    from cyberdrop_dl.network.request import RequestParams
+    from cyberdrop_dl.network.response import AbstractResponse
     from cyberdrop_dl.url_objects import ScrapeItem
 
 
@@ -134,7 +134,7 @@ class EromeCrawler(Crawler):
         self, scrape_item: ScrapeItem, /, url: AbsoluteHttpURL, thumb: AbsoluteHttpURL | str | None = None
     ) -> None:
         async with self.catch_errors(url):
-            name = url.name or url.parent.name
+            name = name_from_url(url)
             filename, ext = self.get_filename_and_ext(name)
             await self.handle_file(url, scrape_item, name, ext, thumbnail=thumb, custom_filename=filename)
 

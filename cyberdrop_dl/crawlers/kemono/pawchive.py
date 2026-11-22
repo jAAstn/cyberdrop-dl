@@ -3,15 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar, override
 
 from cyberdrop_dl import aio
-from cyberdrop_dl.clients.http import HTTPConfig
 from cyberdrop_dl.constants import CDL_USER_AGENT
 from cyberdrop_dl.crawlers.crawler import DownloadConfig
 from cyberdrop_dl.crawlers.kemono.api import KemonoAPI
 from cyberdrop_dl.crawlers.kemono.kemono import FileFilterer, KemonoBaseCrawler
 from cyberdrop_dl.crawlers.kemono.models import UserPostModel
 from cyberdrop_dl.exceptions import ScrapeError
+from cyberdrop_dl.network.http import HTTPConfig
 from cyberdrop_dl.url_objects import AbsoluteHttpURL, ScrapeItem
 from cyberdrop_dl.utils.errors import error_handling_wrapper
+from cyberdrop_dl.utils.urls import name_from_url
 
 if TYPE_CHECKING:
     from cyberdrop_dl.config.crawlers import KemonoConfig
@@ -127,7 +128,7 @@ class PawchiveCrawler(KemonoBaseCrawler[PawchiveAPI]):
         if await self.check_complete(url):
             return
 
-        name = name or url.name or url.parent.name
+        name = name or name_from_url(url)
         m3u8, info = await self.request_m3u8(url)
         await self.handle_file(
             url,
