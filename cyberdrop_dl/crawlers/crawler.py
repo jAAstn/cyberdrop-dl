@@ -38,6 +38,7 @@ from cyberdrop_dl.utils.dataclass import ConfigDataclass, DictDataclass, struct
 from cyberdrop_dl.utils.errors import OnExceptionCallback, error_handling_context
 from cyberdrop_dl.utils.urls import (
     URLDeduper,
+    ensure_trailing_slash,
     is_within_domain,
     matches_any_host,
     name_from_url,
@@ -46,6 +47,7 @@ from cyberdrop_dl.utils.urls import (
     path_qs,
     path_qs_frag,
     remove_trailing_slash,
+    sort_query,
 )
 
 if TYPE_CHECKING:
@@ -67,7 +69,7 @@ if TYPE_CHECKING:
 
     from cyberdrop_dl.config import Config
     from cyberdrop_dl.cookies import SiteCookies
-    from cyberdrop_dl.database import Database
+    from cyberdrop_dl.database.db import Database
     from cyberdrop_dl.manager import Manager
     from cyberdrop_dl.network.request import RequestParams
     from cyberdrop_dl.network.response import AbstractResponse
@@ -794,6 +796,17 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
 
         return False
 
+    @classmethod
+    def _get_normalized_referers(cls, referer: AbsoluteHttpURL) -> list[AbsoluteHttpURL]:
+
+        def options() -> Iterable[AbsoluteHttpURL]:
+            for url in (referer, sort_query(referer)):
+                yield url
+                yield remove_trailing_slash(url)
+                yield ensure_trailing_slash(url)
+
+        return sorted(set(options()))
+
     @final
     async def check_complete_from_referer(
         self: Crawler, referer: AbsoluteHttpURL, *, any_crawler: bool = False
@@ -803,7 +816,8 @@ class Crawler(HTTPMixin, HLSMixin, ABC):
         if `any_crawler` is `True`, checks database entries for all crawlers and returns `True` if at least 1 of them has marked it as completed
         """
         domain = None if any_crawler else self.DOMAIN
-        downloaded = await self.database.history.check_complete_by_referer(domain, referer)
+        referers = self._get_normalized_referers(referer)
+        downloaded = await self.database.history.check_complete_by_referer(domain, referers)
         if downloaded:
             logger.info(f"Skipping {referer} as it has already been downloaded")
             self.tui.files.stats.prev_completed += 1

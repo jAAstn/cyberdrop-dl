@@ -12,7 +12,7 @@ from cyberdrop_dl import __version__, aio, constants, context, dependencies, env
 from cyberdrop_dl.appdata import AppData
 from cyberdrop_dl.cache import cache_context
 from cyberdrop_dl.config import Config
-from cyberdrop_dl.database import Database
+from cyberdrop_dl.database.db import Database
 from cyberdrop_dl.dedupe import Czkawka
 from cyberdrop_dl.hasher import Hasher
 from cyberdrop_dl.logs import LoggerAdapter, capture_logs, log_spacer
@@ -86,10 +86,13 @@ class Manager:
         self.appdata.mkdirs()
         self.config.resolve_paths()
 
+    def new_database(self, *, transfer: bool = True) -> Database:
+        return Database(self.appdata.db_file, self.config.ignore_history, _auto_transfer=transfer)
+
     @contextlib.contextmanager
     def __call__(self) -> Generator[Self]:
         self.__resolve_paths()
-        self.database = Database(self.appdata.db_file, self.config.ignore_history)
+        self.database = self.new_database()
         self.deduper = Czkawka.from_manager(self)
         self.sorter = Sorter.from_config(self.config)
         with (
@@ -189,7 +192,7 @@ class Manager:
             return [path]
 
         if await aio.is_dir(path):
-            return [f async for f in aio.glob(path, "*.txt")]
+            return await aio.list_glob(path, "*.txt")
 
         return []
 

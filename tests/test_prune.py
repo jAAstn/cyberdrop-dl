@@ -10,7 +10,7 @@ import pytest
 
 from cyberdrop_dl import aio, program_ui
 from cyberdrop_dl.__main__ import run_cdl
-from cyberdrop_dl.database import Database
+from cyberdrop_dl.database.db import Database
 from cyberdrop_dl.database.hash import _path_exists, _path_exists_inner
 from cyberdrop_dl.url_objects import AbsoluteHttpURL
 
@@ -45,7 +45,7 @@ async def _add_file(database: Database, file: Path) -> None:
 
 
 async def _count(database: Database, table: str) -> int:
-    async with database.reader() as db_conn:
+    async with database._pool_mgr.reader() as db_conn:
         cursor = await db_conn.execute(f"SELECT COUNT(*) AS count FROM {table};")  # noqa: S608
         row = await cursor.fetchone()
         assert row is not None
@@ -53,7 +53,7 @@ async def _count(database: Database, table: str) -> int:
 
 
 async def _filenames(database: Database, table: str) -> set[str]:
-    async with database.reader() as db_conn:
+    async with database._pool_mgr.reader() as db_conn:
         rows = await db_conn.execute_fetchall(f"SELECT download_filename FROM {table};")  # noqa: S608
         return {row["download_filename"] for row in rows}
 

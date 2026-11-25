@@ -7,19 +7,20 @@ import asyncio
 import contextlib
 import dataclasses
 import sys
-from collections.abc import AsyncIterable
 from pathlib import Path
 from stat import S_ISREG
-from typing import IO, TYPE_CHECKING, Any, Self, TypeVar, cast, overload, override
+from typing import IO, TYPE_CHECKING, Any, Protocol, Self, TypeVar, cast, overload, override
 from weakref import WeakValueDictionary
 
 from aiolimiter.leakybucket import AsyncLimiter
 
+from cyberdrop_dl import context, env
 from cyberdrop_dl.constants import MISSING
 
 if TYPE_CHECKING:
     from collections.abc import (
         AsyncGenerator,
+        AsyncIterable,
         AsyncIterator,
         Awaitable,
         Callable,
@@ -30,13 +31,72 @@ if TYPE_CHECKING:
         Sequence,
     )
     from contextvars import Context
-    from types import TracebackType
+    from types import FrameType, TracebackType
 
     from _typeshed import OpenBinaryMode, OpenTextMode
 
 
 _T_co = TypeVar("_T_co", covariant=True)
 __tracebackhide__ = True
+
+
+if env.DEBUG_MODE:
+
+    def _check_running_loop(name: str | None = None) -> None:
+        if not context.CHECK_BLOCKING_OPERATION.get():
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        operation = f"A {name} operation" if name else "This operation"
+        raise RuntimeError(f"{operation} is slow and should run on another thread to not block the event loop")
+
+else:
+
+    def _check_running_loop(name: str | None = None) -> None:  # noqa: ARG001
+        return
+
+
+def may_block[**P, T](name: str | None = None) -> Callable[[Callable[P, T]], Callable[P, T]]:
+
+    def check_and_run(fn: Callable[P, T]) -> Callable[P, T]:
+
+        fname = name or getattr(fn, "__name__", None)
+
+        def run(*args: P.args, **kwargs: P.kwargs) -> T:
+            _check_running_loop(fname)
+            return fn(*args, **kwargs)
+
+        return run
+
+    return check_and_run
+
+
+def _get_coro_frame(coro: Coroutine[Any, Any, object]) -> FrameType | None:
+    try:
+        return coro.cr_frame  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType, reportAttributeAccessIssue]
+    except AttributeError:
+        return None
+
+
+def get_coro_name(coro: Coroutine[Any, Any, object]) -> str | None:
+    module = url = None
+    name = getattr(coro, "__qualname__", None) or getattr(coro, "__name__", None)
+    frame = _get_coro_frame(coro)
+    if frame is not None:
+        module = frame.f_globals.get("__name__") or None
+        get = frame.f_locals.get
+        if item := get("scrape_item") or get("media_item") or get("item"):
+            url = getattr(item, "url", None)
+        else:
+            url = get("url")
+
+    full_name = ".".join(filter(None, (module, name)))
+    if url:
+        full_name += f"('{url}')"
+    return full_name or None
 
 
 class EagerTaskGroup(asyncio.TaskGroup):
@@ -55,6 +115,7 @@ class EagerTaskGroup(asyncio.TaskGroup):
             context: Context | None = None,
             eager_start: bool | None = None,
         ) -> asyncio.Task[_T_co]:
+            name = name or get_coro_name(coro)
             if eager_start is False:
 
                 async def lazy() -> _T_co:
@@ -66,6 +127,19 @@ class EagerTaskGroup(asyncio.TaskGroup):
                 run = coro
 
             return super().create_task(run, name=name, context=context)
+
+    else:
+
+        @override
+        def create_task(
+            self,
+            coro: Coroutine[Any, Any, _T_co],
+            *,
+            name: str | None = None,
+            context: Context | None = None,
+            eager_start: bool | None = None,
+        ) -> asyncio.Task[_T_co]:
+            return super().create_task(coro, name=name or get_coro_name(coro), context=context, eager_start=eager_start)
 
     async def __aexit__(
         self,
@@ -150,15 +224,16 @@ class _AsyncChain:
     @staticmethod
     async def from_iterable[T](async_iterables: Iterable[AsyncIterable[T]]) -> AsyncGenerator[T]:
         for a_iterable in async_iterables:
-            async for value in a_iterable:
-                yield value
+            async with maybe_aclosing(a_iterable):
+                async for value in a_iterable:
+                    yield value
 
     @staticmethod
-    def yield_this[T](*items: T) -> AsyncGenerator[T]:
+    def yield_this[T](*items: T) -> AsyncIterable[T]:
         return to_async_iterable(items)
 
 
-async def to_async_iterable[T](items: Iterable[T]) -> AsyncGenerator[T]:
+async def to_async_iterable[T](items: Iterable[T]) -> AsyncIterable[T]:
     for item in items:
         yield item
 
@@ -297,6 +372,14 @@ class AsyncIteratorWrapper[T]:
             raise StopAsyncIteration from None
 
         return cast("T", value)
+
+    @classmethod
+    def wrap[**P, R](cls, fn: Callable[P, Awaitable[Iterable[R]]]) -> Callable[P, AsyncIteratorWrapper[R]]:
+
+        def async_iter(*args: P.args, **kwargs: P.kwargs) -> AsyncIteratorWrapper[R]:
+            return AsyncIteratorWrapper(fn(*args, **kwargs))
+
+        return async_iter
 
 
 @overload
@@ -551,9 +634,9 @@ async def queue_consumer[T](queue: asyncio.Queue[T], stop_sentinel: Any = MISSIN
             queue.task_done()
 
 
-async def aenumerate[T](agen: AsyncGenerator[T], *, start: int = 0) -> AsyncGenerator[tuple[int, T]]:
+async def aenumerate[T](agen: AsyncIterable[T], *, start: int = 0) -> AsyncGenerator[tuple[int, T]]:
     index = start
-    async with contextlib.aclosing(agen) as items:
+    async with maybe_aclosing(agen) as items:
         async for item in items:
             yield index, item
             index += 1
@@ -570,7 +653,7 @@ def run[T](coro: Coroutine[Any, Any, T]) -> T:
         return runner.run(coro)
 
 
-class maybe_aclosing[T](contextlib.AbstractAsyncContextManager[AsyncIterable[T], None]):  # noqa: N801
+class maybe_aclosing[T](contextlib.AbstractAsyncContextManager[Any, None]):  # noqa: N801
     def __init__(self, thing: AsyncIterable[T]) -> None:
         self.thing: AsyncIterable[T] = thing
 
@@ -580,6 +663,21 @@ class maybe_aclosing[T](contextlib.AbstractAsyncContextManager[AsyncIterable[T],
     async def __aexit__(self, *exc_info) -> None:
         if callable(aclose := getattr(self.thing, "aclose", None)):
             await aclose()  # pyright: ignore[reportGeneralTypeIssues]
+
+
+class _HasAsyncClose(Protocol):
+    def close(self) -> Awaitable[Any]: ...
+
+
+class closing[T: _HasAsyncClose](contextlib.AbstractAsyncContextManager[T, None]):  # noqa: N801
+    def __init__(self, thing: T) -> None:
+        self.thing: T = thing
+
+    async def __aenter__(self) -> T:
+        return self.thing
+
+    async def __aexit__(self, *_) -> None:
+        await self.thing.close()
 
 
 def to_thread[**P, R](fn: Callable[P, R]) -> Callable[P, Coroutine[None, None, R]]:
@@ -598,6 +696,8 @@ def move(src: Path, dst: Path) -> None:
     shutil.move(src, dst)
 
 
+# TODO: move all path funtions to their own submodule
+
 chmod = to_thread(Path.chmod)
 exists = to_thread(Path.exists)
 is_dir = to_thread(Path.is_dir)
@@ -612,21 +712,40 @@ unlink = remove = to_thread(Path.unlink)
 write_bytes = to_thread(Path.write_bytes)
 write_text = to_thread(Path.write_text)
 rmdir = to_thread(Path.rmdir)
+walk = AsyncIteratorWrapper.wrap(to_thread(Path.walk))
 
 
-def glob(path: Path, pattern: str) -> AsyncIterator[Path]:
-    coro = asyncio.to_thread(path.glob, pattern)
-    return AsyncIteratorWrapper(coro)
+@AsyncIteratorWrapper.wrap
+@to_thread
+def glob(path: Path, pattern: str, *, filter_fn: Callable[[Path], bool] | None = None) -> Iterable[Path]:
+    return filter(filter_fn, path.glob(pattern))
 
 
-def rglob(path: Path, pattern: str) -> AsyncIterator[Path]:
-    coro = asyncio.to_thread(path.rglob, pattern)
-    return AsyncIteratorWrapper(coro)
+@AsyncIteratorWrapper.wrap
+@to_thread
+def rglob(path: Path, pattern: str, *, filter_fn: Callable[[Path], bool] | None = None) -> Iterable[Path]:
+    return filter(filter_fn, path.rglob(pattern))
 
 
-def iterdir(path: Path) -> AsyncIterator[Path]:
-    coro = asyncio.to_thread(path.iterdir)
-    return AsyncIteratorWrapper(coro)
+@AsyncIteratorWrapper.wrap
+@to_thread
+def iterdir(path: Path, filter_fn: Callable[[Path], bool] | None = None) -> Iterable[Path]:
+    return filter(filter_fn, path.iterdir())
+
+
+@to_thread
+def list_glob(path: Path, pattern: str, *, filter_fn: Callable[[Path], bool] | None = None) -> list[Path]:
+    return list(filter(filter_fn, path.glob(pattern)))
+
+
+@to_thread
+def list_rglob(path: Path, pattern: str, *, filter_fn: Callable[[Path], bool] | None = None) -> list[Path]:
+    return list(filter(filter_fn, path.rglob(pattern)))
+
+
+@to_thread
+def list_dir(path: Path, filter_fn: Callable[[Path], bool] | None = None) -> list[Path]:
+    return list(filter(filter_fn, path.iterdir()))
 
 
 @overload

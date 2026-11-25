@@ -3,18 +3,24 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, overload
 from xml.etree import ElementTree as ET  # noqa: TID251
 
+from cyberdrop_dl import aio
 from cyberdrop_dl.utils import css
-
-XML = ET.XML
-SubElement = ET.SubElement
-indent = ET.indent
-register_namespace = ET.register_namespace
-SelectorError = css.SelectorError
 
 if TYPE_CHECKING:
     Element = ET.Element[str]
+
 else:
     Element = ET.Element
+
+__tracebackhide__ = True
+
+may_block = aio.may_block("XML")
+
+XML = may_block(ET.XML)
+SubElement = ET.SubElement
+indent = may_block(ET.indent)
+register_namespace = ET.register_namespace
+SelectorError = css.SelectorError
 
 
 def attr_or_none(ele: ET.Element[Any], *attributes: str) -> str | None:
@@ -29,6 +35,7 @@ def attr(ele: ET.Element[Any], *attributes: str) -> str:
     raise SelectorError(f"{attributes = } not found")
 
 
+@may_block
 def _select_one(ele: ET.Element[Any], xpath: str) -> ET.Element:
     ele_found = ele.find(xpath)
     if ele_found is None:
@@ -59,6 +66,7 @@ def text(ele: ET.Element[Any]) -> str:
     return ele.text or ""
 
 
+@may_block
 def to_bytes(
     element: ET.Element[Any],
     *,

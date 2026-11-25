@@ -7,8 +7,9 @@ import sys
 from pathlib import Path
 from typing import LiteralString
 
-from cyberdrop_dl import database
-from cyberdrop_dl.database import common
+from cyberdrop_dl import aio
+from cyberdrop_dl.database.conn import connect
+from cyberdrop_dl.database.db import Database
 from cyberdrop_dl.database.history import apply_fixes
 from cyberdrop_dl.database.schema import CURRENT_VERSION, Version
 from cyberdrop_dl.filepath import sanitize_filename
@@ -52,7 +53,7 @@ def detect_version(conn: sqlite3.Connection) -> Version | None:
     if "schema_version" in tables:
         versions = _get_applied_versions(conn)
         if versions:
-            return Version.parse(max(versions))
+            return max(map(Version.parse, versions))
 
     if tables == {"media", "downloads_temp", "coomeno"}:
         return Version(4, 2, 231)
@@ -141,7 +142,7 @@ _DIRECT_TRANSFER_TABLES = ["media", "hash", "files"]
 _SKIP_TABLES = {"schema_version"}
 
 
-def run(db_path: Path, *, force: bool = False) -> None:
+def run(db_path: Path, *, force: bool = False, cli: bool = True) -> None:
     if not db_path.exists():
         raise FileNotFoundError(f"Database not found: {db_path}")
 
@@ -153,11 +154,12 @@ def run(db_path: Path, *, force: bool = False) -> None:
 
     logger.info("Detected schema version: %s", old_version)
 
-    if not force and old_version == CURRENT_VERSION:
-        logger.info(
-            "Database is already at the latest schema (%s). Use --force to re-run.",
-            CURRENT_VERSION,
-        )
+    if not force and old_version is not None and old_version >= CURRENT_VERSION:
+        if cli:
+            logger.info(
+                "Database is already at the latest schema (%s). Use --force to re-run.",
+                CURRENT_VERSION,
+            )
         return
 
     now = sanitize_filename(str(dates.now()))
@@ -193,7 +195,7 @@ def run(db_path: Path, *, force: bool = False) -> None:
 
 def _create_new_database(path: Path) -> None:
     async def connect() -> None:
-        async with database.Database(path, ignore_history=True):
+        async with Database(path, ignore_history=True, _auto_transfer=False):
             pass
 
     asyncio.run(connect())
@@ -202,7 +204,7 @@ def _create_new_database(path: Path) -> None:
 def _apply_fixes(db_path: Path) -> None:
 
     async def fix() -> None:
-        async with common.connect(db_path) as conn:
+        async with aio.closing(await connect(db_path)) as conn:
             await apply_fixes(conn)
 
     asyncio.run(fix())
